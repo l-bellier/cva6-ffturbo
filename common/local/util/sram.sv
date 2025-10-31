@@ -64,7 +64,7 @@ end
 
   for (genvar k = 0; k<(DATA_WIDTH+63)/64; k++) begin : gen_cut
       // unused byte-enable segments (8bits) are culled by the tool
-      tc_sram_wrapper #(
+      tc_sram_fpga_wrapper #(
         .NumWords(NUM_WORDS),           // Number of Words in data array
         .DataWidth(64),                 // Data signal width
         .ByteWidth(32'd8),              // Width of a data byte

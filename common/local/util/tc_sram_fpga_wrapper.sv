@@ -7,7 +7,7 @@
 //
 // Original Author: Sébastien Jacq
 
-module tc_sram_wrapper #(
+module tc_sram_fpga_wrapper #(
   parameter int unsigned NumWords     = 32'd1024, // Number of Words in data array
   parameter int unsigned DataWidth    = 32'd128,  // Data signal width
   parameter int unsigned ByteWidth    = 32'd8,    // Width of a data byte

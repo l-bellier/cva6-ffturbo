@@ -24,38 +24,13 @@
 // =========================================================================== //
 
 `include "axi/assign.svh"
+`include "rvfi_types.svh"
 
 module ariane_testharness #(
   parameter config_pkg::cva6_cfg_t CVA6Cfg = cva6_config_pkg::cva6_cfg,
   parameter bit IsRVFI = bit'(cva6_config_pkg::CVA6ConfigRvfiTrace),
-  parameter type rvfi_instr_t = struct packed {
-    logic [config_pkg::NRET-1:0]                  valid;
-    logic [config_pkg::NRET*64-1:0]               order;
-    logic [config_pkg::NRET*config_pkg::ILEN-1:0] insn;
-    logic [config_pkg::NRET-1:0]                  trap;
-    logic [config_pkg::NRET*riscv::XLEN-1:0]      cause;
-    logic [config_pkg::NRET-1:0]                  halt;
-    logic [config_pkg::NRET-1:0]                  intr;
-    logic [config_pkg::NRET*2-1:0]                mode;
-    logic [config_pkg::NRET*2-1:0]                ixl;
-    logic [config_pkg::NRET*5-1:0]                rs1_addr;
-    logic [config_pkg::NRET*5-1:0]                rs2_addr;
-    logic [config_pkg::NRET*riscv::XLEN-1:0]      rs1_rdata;
-    logic [config_pkg::NRET*riscv::XLEN-1:0]      rs2_rdata;
-    logic [config_pkg::NRET*5-1:0]                rd_addr;
-    logic [config_pkg::NRET*riscv::XLEN-1:0]      rd_wdata;
-    logic [config_pkg::NRET*riscv::XLEN-1:0]      pc_rdata;
-    logic [config_pkg::NRET*riscv::XLEN-1:0]      pc_wdata;
-    logic [config_pkg::NRET*riscv::VLEN-1:0]      mem_addr;
-    logic [config_pkg::NRET*riscv::PLEN-1:0]      mem_paddr;
-    logic [config_pkg::NRET*(riscv::XLEN/8)-1:0]  mem_rmask;
-    logic [config_pkg::NRET*(riscv::XLEN/8)-1:0]  mem_wmask;
-    logic [config_pkg::NRET*riscv::XLEN-1:0]      mem_rdata;
-    logic [config_pkg::NRET*riscv::XLEN-1:0]      mem_wdata;
-  },
-  //
-  parameter int unsigned AXI_USER_WIDTH    = ariane_pkg::AXI_USER_WIDTH,
-  parameter int unsigned AXI_USER_EN       = ariane_pkg::AXI_USER_EN,
+  parameter int unsigned AXI_USER_WIDTH    = CVA6Cfg.AxiUserWidth,
+  parameter int unsigned AXI_USER_EN       = CVA6Cfg.AXI_USER_EN,
   parameter int unsigned AXI_ADDRESS_WIDTH = 64,
   parameter int unsigned AXI_DATA_WIDTH    = 64,
   parameter bit          InclSimDTM        = 1'b1,
@@ -86,13 +61,6 @@ module ariane_testharness #(
   logic        init_done;
   logic [31:0] jtag_exit, dmi_exit;
   logic [31:0] rvfi_exit;
-
-  /*logic        jtag_TCK;
-  logic        jtag_TMS;
-  logic        jtag_TDI;
-  logic        jtag_TRSTn;
-  logic        jtag_TDO_data;
-  logic        jtag_TDO_driven;*/
 
   logic        debug_req_valid;
   logic        debug_req_ready;
@@ -150,41 +118,6 @@ module ariane_testharness #(
   assign debug_req           = jtag_dmi_req;
   assign jtag_resp_valid     = debug_resp_valid;
 
- /* logic debug_enable;
-  initial begin
-    if (!$value$plusargs("jtag_rbb_enable=%b", jtag_enable)) jtag_enable = 'h0;
-    if ($test$plusargs("debug_disable")) debug_enable = 'h0; else debug_enable = 'h1;
-    if (riscv::XLEN != 32 & riscv::XLEN != 64) $error("XLEN different from 32 and 64");
-  end
-
-  // debug if MUX
-  assign debug_req_valid     = (jtag_enable[0]) ? jtag_req_valid     : dmi_req_valid;
-  assign debug_resp_ready    = (jtag_enable[0]) ? jtag_resp_ready    : dmi_resp_ready;
-  assign debug_req           = (jtag_enable[0]) ? jtag_dmi_req       : dmi_req;
-  if (ariane_pkg::RVFI) begin
-    assign exit_o              = (jtag_enable[0]) ? jtag_exit          : rvfi_exit;
-  end else begin
-    assign exit_o              = (jtag_enable[0]) ? jtag_exit          : dmi_exit;
-  end
-  assign jtag_resp_valid     = (jtag_enable[0]) ? debug_resp_valid   : 1'b0;
-  assign dmi_resp_valid      = (jtag_enable[0]) ? 1'b0               : debug_resp_valid;*/
-/*
-  // SiFive's SimJTAG Module
-  // Converts to DPI calls
-  SimJTAG i_SimJTAG (
-    .clock                ( clk_i                ),
-    .reset                ( ~rst_ni              ),
-    .enable               ( jtag_enable[0]       ),
-    .init_done            ( init_done            ),
-    .jtag_TCK             ( jtag_TCK             ),
-    .jtag_TMS             ( jtag_TMS             ),
-    .jtag_TDI             ( jtag_TDI             ),
-    .jtag_TRSTn           ( jtag_TRSTn           ),
-    .jtag_TDO_data        ( jtag_TDO_data        ),
-    .jtag_TDO_driven      ( jtag_TDO_driven      ),
-    .exit                 ( jtag_exit            )
-  );
-*/
   dmi_jtag i_dmi_jtag (
     .clk_i            ( clk_i           ),
     .rst_ni           ( rst_ni          ),
@@ -204,53 +137,11 @@ module ariane_testharness #(
     .tdo_oe_o         ( jtag_TDO_driven )
   );
 
- /* // SiFive's SimDTM Module
-  // Converts to DPI calls
-  logic [1:0] debug_req_bits_op;
-  assign dmi_req.op = dm::dtm_op_e'(debug_req_bits_op);
-
-  if (InclSimDTM) begin
-    SimDTM i_SimDTM (
-      .clk                  ( clk_i                 ),
-      .reset                ( ~rst_ni               ),
-      .debug_req_valid      ( dmi_req_valid         ),
-      .debug_req_ready      ( debug_req_ready       ),
-      .debug_req_bits_addr  ( dmi_req.addr          ),
-      .debug_req_bits_op    ( debug_req_bits_op     ),
-      .debug_req_bits_data  ( dmi_req.data          ),
-      .debug_resp_valid     ( dmi_resp_valid        ),
-      .debug_resp_ready     ( dmi_resp_ready        ),
-      .debug_resp_bits_resp ( debug_resp.resp       ),
-      .debug_resp_bits_data ( debug_resp.data       ),
-      .exit                 ( dmi_exit              )
-    );
-  end else begin
-    assign dmi_req_valid = '0;
-    assign debug_req_bits_op = '0;
-    assign dmi_exit = 1'b0;
-  end
-*/
   // this delay window allows the core to read and execute init code
   // from the bootrom before the first debug request can interrupt
   // core. this is needed in cases where an fsbl is involved that
   // expects a0 and a1 to be initialized with the hart id and a
   // pointer to the dev tree, respectively.
- /* localparam int unsigned DmiDelCycles = 500;
-
-  logic debug_req_core_ungtd;
-  int dmi_del_cnt_d, dmi_del_cnt_q;
-
-  assign dmi_del_cnt_d  = (dmi_del_cnt_q) ? dmi_del_cnt_q - 1 : 0;
-  assign debug_req_core = (dmi_del_cnt_q) ? 1'b0 :
-                          (!debug_enable) ? 1'b0 : debug_req_core_ungtd;
-
-  always_ff @(posedge clk_i or negedge rst_ni) begin : p_dmi_del_cnt
-    if(!rst_ni) begin
-      dmi_del_cnt_q <= DmiDelCycles;
-    end else begin
-      dmi_del_cnt_q <= dmi_del_cnt_d;
-    end
-  end*/
 
   ariane_axi::req_t    dm_axi_m_req;
   ariane_axi::resp_t   dm_axi_m_resp;
@@ -643,12 +534,29 @@ module ariane_testharness #(
   // ---------------
   ariane_axi::req_t    axi_ariane_req;
   ariane_axi::resp_t   axi_ariane_resp;
-  rvfi_instr_t [CVA6Cfg.NrCommitPorts-1:0] rvfi;
+  
+  // RVFI
+  localparam type rvfi_instr_t = `RVFI_INSTR_T(CVA6Cfg);
+  localparam type rvfi_csr_elmt_t = `RVFI_CSR_ELMT_T(CVA6Cfg);
+  localparam type rvfi_csr_t = `RVFI_CSR_T(CVA6Cfg, rvfi_csr_elmt_t);
+
+  // RVFI PROBES
+  localparam type rvfi_probes_instr_t = `RVFI_PROBES_INSTR_T(CVA6Cfg);
+  localparam type rvfi_probes_csr_t = `RVFI_PROBES_CSR_T(CVA6Cfg);
+  localparam type rvfi_probes_t = struct packed {
+    rvfi_probes_csr_t csr;
+    rvfi_probes_instr_t instr;
+  };
+
+    rvfi_probes_t rvfi_probes;
+  rvfi_csr_t rvfi_csr;
+  rvfi_instr_t [CVA6Cfg.NrCommitPorts-1:0]  rvfi_instr;
 
   ariane #(
     .CVA6Cfg              ( CVA6Cfg             ),
-    .IsRVFI               ( IsRVFI              ),
-    .rvfi_instr_t         ( rvfi_instr_t        ),
+    .rvfi_probes_instr_t  ( rvfi_probes_instr_t ),
+    .rvfi_probes_csr_t    ( rvfi_probes_csr_t   ),
+    .rvfi_probes_t        ( rvfi_probes_t       ),
     .noc_req_t            ( ariane_axi::req_t   ),
     .noc_resp_t           ( ariane_axi::resp_t  )
   ) i_ariane (
@@ -659,7 +567,7 @@ module ariane_testharness #(
     .irq_i                ( irqs                ),
     .ipi_i                ( ipi                 ),
     .time_irq_i           ( timer_irq           ),
-    .rvfi_o               ( rvfi                ),
+    .rvfi_probes_o        ( rvfi_probes         ),
 // Disable Debug when simulating with Spike
 `ifdef SPIKE_TANDEM
     .debug_req_i          ( 1'b0                ),
@@ -690,6 +598,21 @@ module ariane_testharness #(
     end
   end
 
+  cva6_rvfi #(
+      .CVA6Cfg   (CVA6Cfg),
+      .rvfi_instr_t(rvfi_instr_t),
+      .rvfi_csr_t(rvfi_csr_t),
+      .rvfi_probes_instr_t(rvfi_probes_instr_t),
+      .rvfi_probes_csr_t(rvfi_probes_csr_t),
+      .rvfi_probes_t(rvfi_probes_t)
+  ) i_cva6_rvfi (
+      .clk_i     (clk_i),
+      .rst_ni    (rst_ni),
+      .rvfi_probes_i(rvfi_probes),
+      .rvfi_instr_o(rvfi_instr),
+      .rvfi_csr_o(rvfi_csr)
+  );
+
   rvfi_tracer  #(
     .CVA6Cfg(CVA6Cfg),
     .rvfi_instr_t(rvfi_instr_t),
@@ -700,7 +623,7 @@ module ariane_testharness #(
   ) rvfi_tracer_i (
     .clk_i(clk_i),
     .rst_ni(rst_ni),
-    .rvfi_i(rvfi),
+    .rvfi_i(rvfi_instr),
     .end_of_test_o(rvfi_exit)
   );
 

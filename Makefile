@@ -166,8 +166,7 @@ endif
 
 
 # this list contains the standalone components
-src :=  core/include/$(target)_config_pkg.sv                                         \
-        corev_apu/src/ariane.sv                                                      \
+src :=  corev_apu/src/ariane.sv                                                      \
         $(wildcard corev_apu/bootrom/*.sv)                                           \
         $(wildcard corev_apu/clint/*.sv)                                             \
         $(wildcard corev_apu/fpga/src/axi2apb/src/*.sv)                              \
@@ -192,7 +191,7 @@ src :=  core/include/$(target)_config_pkg.sv                                    
         vendor/pulp-platform/common_cells/src/rstgen_bypass.sv                       \
         vendor/pulp-platform/common_cells/src/rstgen.sv                              \
         vendor/pulp-platform/common_cells/src/addr_decode.sv                         \
-	vendor/pulp-platform/common_cells/src/stream_register.sv                     \
+		vendor/pulp-platform/common_cells/src/stream_register.sv                     \
         vendor/pulp-platform/axi/src/axi_cut.sv                                      \
         vendor/pulp-platform/axi/src/axi_join.sv                                     \
         vendor/pulp-platform/axi/src/axi_delayer.sv                                  \
@@ -218,7 +217,9 @@ src :=  core/include/$(target)_config_pkg.sv                                    
         corev_apu/tb/rvfi_tracer.sv                                                  \
         corev_apu/tb/common/uart.sv                                                  \
         corev_apu/tb/common/SimDTM.sv                                                \
-        corev_apu/tb/common/SimJTAG.sv
+        corev_apu/tb/common/SimJTAG.sv												 \
+		common/local/util/tc_sram_fpga_wrapper.sv									 \
+		vendor/pulp-platform/fpga-support/rtl/SyncSpRamBeNx64.sv
 
 src := $(addprefix $(root-dir), $(src))
 
@@ -252,7 +253,7 @@ riscv-fp-tests            := $(shell xargs printf '\n%s' < $(riscv-fp-tests-list
 riscv-benchmarks          := $(shell xargs printf '\n%s' < $(riscv-benchmarks-list) | cut -b 1-)
 
 # Search here for include files (e.g.: non-standalone components)
-incdir := vendor/pulp-platform/common_cells/include/ vendor/pulp-platform/axi/include/ corev_apu/register_interface/include/
+incdir := vendor/pulp-platform/common_cells/include/ vendor/pulp-platform/axi/include/ corev_apu/register_interface/include/  $(CVA6_REPO_DIR)/core/include/
 
 # Compile and sim flags
 compile_flag     += +cover=bcfst+/dut -incr -64 -nologo -quiet -suppress 13262 -suppress 8602 -permissive -svinputport=compat +define+$(defines)
@@ -315,12 +316,14 @@ build: $(library) $(library)/.build-srcs $(library)/.build-tb
 	# Optimize top level
 	$(VOPT) $(compile_flag) -work $(library)  $(top_level) -o $(top_level)_optimized +acc -check_synthesis
 
+uart_src_vhdl := $(wildcard corev_apu/fpga/src/apb_uart/src/*.vhd)
+uart_src_vhdl := $(addprefix $(root-dir), $(uart_src_vhdl))
 # src files
 $(library)/.build-srcs: $(library)
 	$(VLOG) $(compile_flag) -timescale "1ns / 1ns" -work $(library) -pedanticerrors -f core/Flist.cva6 $(list_incdir) -suppress 2583 +defines+$(defines)
 	$(VLOG) $(compile_flag) -work $(library) $(filter %.sv,$(ariane_pkg)) $(list_incdir) -suppress 2583 +defines+$(defines)
 	# Suppress message that always_latch may not be checked thoroughly by QuestaSim.
-	$(VCOM) $(compile_flag_vhd) -work $(library) $(filter %.vhd,$(uart_src)) +defines+$(defines)
+	$(VCOM) $(compile_flag_vhd) -work $(library) $(filter %.vhd,$(uart_src_vhdl)) +defines+$(defines)
 	$(VLOG) $(compile_flag) -timescale "1ns / 1ns" -work $(library) -pedanticerrors $(filter %.sv,$(src)) $(tbs) $(list_incdir) -suppress 2583 +defines+$(defines)
 	touch $(library)/.build-srcs
 
