@@ -1,5 +1,5 @@
-# Copyright (c) 2023 Thales.
-# 
+# Copyright (c) 2025 Thales.
+
 # Copyright and related rights are licensed under the Apache
 # License, Version 2.0 (the "License"); you may not use this file except in
 # compliance with the License.  You may obtain a copy of the License at
@@ -8,130 +8,69 @@
 # this License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
 # CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
-#
-# Author:         Sebastien Jacq - sjthales on github.com
-#
-# Additional contributions by:
-#
-#
-# script Name:    Dockerfile
-# Project Name:   cva6-softcore-contest
-# Language:       
-#
-# Description:    This dokerfile aims at building a container image including 
-#                 RISCV GCC13.1.0 and OpenOCD
-#
-# =========================================================================== #
+
+# Author:         Julien Mallet -  J-Mallet on github.com
+
+# Description:    FFT running on a predefined signal with predefined twiddles.
+
+# ===========================================================================
 # Revisions  :
-# Date        Version  Author       Description
-# 2023-11-22  0.1      S.Jacq       Created
-# =========================================================================== #
+# Date        Version  Author		Description
+# 2025-10-06  0.1      J.Mallet 	Created
+# ===========================================================================
 
-FROM ubuntu:20.04
-
+FROM ubuntu:22.04
 
 ARG UID=1000
 ARG GID=1000
 
-
-# Set default shell during Docker image build to bash
 SHELL ["/bin/bash", "-c"]
-
-# Set non-interactive frontend for apt-get to skip any user confirmations
 ENV DEBIAN_FRONTEND=noninteractive
 
+RUN apt-get update && apt-get install -y  \
+	ca-certificates curl git build-essential \
+	autoconf automake autotools-dev libtool usbutils \
+	libusb-1.0-0-dev libftdi1-dev libc6-dev \
+	libmpc-dev libmpfr-dev libgmp-dev gawk bison flex gperf \
+	texinfo zlib1g-dev pkg-config ninja-build bc \
+	python3 python3-pip python3-dev python3-setuptools python3-ply \
+	openssh-client sudo make net-tools locales vim nano\
+	&& rm -rf /var/lib/apt/lists/*
+
+RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
 
-COPY ./util util
+WORKDIR /util
 
-WORKDIR util
+COPY util .
 
-# Install base packages
-RUN apt-get -y update && \
-	apt-get -y upgrade && \
-	apt-get install --no-install-recommends -y \
-	ca-certificates \
-		autoconf \
-		automake \
-		autotools-dev \
-		curl \
-		git \
-		libmpc-dev \
-		libmpfr-dev \
-		libgmp-dev \
-		gawk \
-		build-essential \
-		bison \
-		flex \
-		texinfo \
-		gperf \
-		libtool \
-		bc \
-		zlib1g-dev \
-		libusb-1.0-0-dev \
-		libftdi1-dev \
-		srecord \
-		sudo \
-		texinfo \
-		udev \
-		locales \
-		make \
-		net-tools \
-		ninja-build \
-		openssh-client \
-		pkg-config \
-		g++ \
-		gawk \
-		gcc \
-		python3-dev \
-		python3-pip \
-		python3-ply \
-		python3-setuptools \
-		python-is-python3 
-		
+RUN git clone --branch v0.12.0 --depth 1 https://github.com/openocd-org/openocd && \
+	cd openocd && \
+	./bootstrap && \
+	./configure --enable-ftdi --prefix=/util/riscv-openocd/build --exec-prefix=/util/riscv-openocd/build && \
+	make -j"$(nproc)" && make install && \
+	cd .. && rm -rf openocd
+ENV PATH="/util/riscv-openocd/build/bin:${PATH}"
+
+RUN mkdir -p /etc/udev/rules.d && \
+	echo "ATTRS{idVendor}==\"0403\", ATTRS{idProduct}==\"6014\", MODE=\"660\", GROUP=\"plugdev\", TAG+=\"uaccess\"" > /etc/udev/rules.d/60-openocd.rules
 
 
-# install openOCD
-RUN git clone https://github.com/openocd-org/openocd && \
-    cd openocd && \
-    git checkout v0.11.0 && \
-    mkdir build && \
-    ./bootstrap && \
-    ./configure --enable-ftdi --prefix=/util/riscv-openocd/build --exec-prefix=/util/riscv-openocd/build && \
-    make && \
-    make install
-
-ENV PATH="$PATH:/util/riscv-openocd/build/bin"				
-		
-# Install rule for udev to access HS2 cable
-RUN echo "ATTRS{idVendor}==\"0403\", ATTRS{idProduct}==\"6014\", MODE=\"660\", GROUP=\"plugdev\", TAG+=\"uaccess\"" > /etc/udev/rules.d/60-openocd.rules
+RUN cd gcc-toolchain-builder && \
+	bash ./get-toolchain.sh && \
+	bash ./build-toolchain.sh riscv_toolchain
+ENV PATH="/util/gcc-toolchain-builder/riscv_toolchain/bin:${PATH}"
 
 
-# install RISCV toolchain
-RUN export RISCV=riscv_toolchain && \
-    cd gcc-toolchain-builder && \
-    ls -al && \
-    bash ./get-toolchain.sh && \
-    bash ./build-toolchain.sh $RISCV
+RUN groupadd -g "${GID}" user || true && \
+	getent group plugdev >/dev/null || groupadd -r plugdev && \
+	useradd -u "${UID}" -m -g user -G plugdev -s /bin/bash user && \
+	echo 'user ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/user && chmod 0440 /etc/sudoers.d/user
 
-
-ENV PATH="$PATH:/util/gcc-toolchain-builder/riscv_toolchain/bin"
-
-
-RUN mkdir /workdir
+RUN mkdir -p /workdir && chown -R "${UID}:${GID}" /workdir
 WORKDIR /workdir
-
-
-
-# Create 'user' account
-RUN groupadd -g $GID -o user
-
-RUN useradd -u $UID -m -g user -G plugdev user \
-	&& echo 'user ALL = NOPASSWD: ALL' > /etc/sudoers.d/user \
-	&& chmod 0440 /etc/sudoers.d/user
-
+	
 USER user
-
-
-
-
+	
+CMD ["/bin/bash"]

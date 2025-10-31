@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python3
 
 # Copyright (c) 2020 Thales.
 # 
@@ -14,7 +14,7 @@
 # Author:         Sebastien Jacq - sjthales on github.com
 #
 # Additional contributions by:
-#
+#		Julien Mallet -  J-Mallet on github.com
 #
 # script Name:    bin2mem
 # Project Name:   CVA6 softcore
@@ -27,6 +27,7 @@
 # Revisions  :
 # Date        Version  Author       Description
 # 2020-10-06  0.1      S.Jacq       Created
+# 2025-10-06  0.2      S.Jacq       Bugfix
 # =========================================================================== #
 
 import sys
@@ -40,7 +41,7 @@ if(len(sys.argv) < 2):
     print("Usage bin2mem.py FILENAME")
     quit()
 
-filename = sys.argv[1].strip('.bin') + ".mem"
+filename = sys.argv[1].removesuffix('.bin') + ".mem"
 
 mem_file  = open(filename,    'wb')
 
