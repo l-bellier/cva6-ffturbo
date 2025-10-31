@@ -352,7 +352,9 @@ module load_store_unit
 
     assign itlb_miss_o                         = 1'b0;
     assign dtlb_miss_o                         = 1'b0;
-    assign dtlb_ppn                            = lsu_paddr[CVA6Cfg.PLEN-1:12];
+    assign dtlb_ppn                            = (CVA6Cfg.VLEN >= CVA6Cfg.PLEN) ?
+                                                  mmu_vaddr[CVA6Cfg.PLEN-1:12] :
+                                                  {{(CVA6Cfg.PLEN - CVA6Cfg.VLEN){1'b0}}, mmu_vaddr[CVA6Cfg.VLEN-1:12]};
     assign dtlb_hit                            = 1'b1;
 
   end
