@@ -6,13 +6,14 @@ https://cva6.readthedocs.io/en/latest/
 
 Checkout the repository and initialize all submodules:
 ```
-$ git clone https://github.com/ThalesGroup/cva6-softcore-contest.git
-$ git submodule update --init --recursive
+git clone https://github.com/ThalesGroup/cva6-softcore-contest.git
+git submodule update --init --recursive
 ```
 
-Do not forget to check all the details of the contest in [Annonce RISC-V contest 2024-2025.pdf](./Annonce%20RISC-V%20contest%202024-2025.pdf).
+Do not forget to check all the details of the contest in [Annonce RISC-V contest 2025-2026.pdf](./Annonce_RISC-V_contest_2025-2026_v1.3.pdf).
 
-This repository contains the files needed for the 2021-2022 contest focusing on energy efficiency. The 2020-2021 contest focusing on the performance can be retrieved in this repository under the cv32a6_contest_2020 GitHub tag.
+This repository contains the files needed for the 2025-2026 contest focusing on fast fourier transform computation. The goal is to modify the CV32A6 architecture and/or add a coprocessor to accelerate the FFT algorithm provided as an 
+application written in C.
 
 # Prerequisites
 
@@ -49,11 +50,9 @@ If you have not yet done so, start provisioning the following:
 
 # FPGA platform
 
-A FPGA platform running **CV32A6** (CVA6 in 32b flavor) has been implemented on **Zybo Z7-20**
+A FPGA platform running **CV32A6** (CVA6 in 32 bits flavor) has been implemented on **Zybo Z7-20**
 
 This platform includes a CV32A6 processor, a JTAG interface to run and debug software applications and a UART interface to display strings on hyperterminal.
-
-The steps to run the RIPE application on CV32A6 FPGA platform are described below.
 
 The JTAG-HS2 programming cable is initially a cable that allows programming of Xilinx FPGAs (bitstream loading) from a host PC.
 
@@ -66,23 +65,31 @@ In our case, we use this cable to program software applications on the CV32A6 in
 
 2. Generate the bitstream of the FPGA platform:
 ```
-$ make cva6_fpga
+make cva6_fpga
 ```
 
 3. When the bitstream is generated, switch on Zybo board and run:
 ```
-$ make program_cva6_fpga
+make program_cva6_fpga
 ```
 When the bitstream is loaded, the green LED `done` lights up.
 ![alt text](./docs/pictures/20201204_160542.jpg)
+
 
 4. Get a hyperterminal configured on /dev/ttyUSB0 115200-8-N-1
 
 Now, the hardware is ready and the hyperterminal is connected to the UART output of the FPGA. We can now start the software.
 
+
+**NOTE: The reset is mapped on the Y16 button near the PMOD, not on the RESET button.**
+
 ## Get started with software environment
 
-The executables of MNIST & CoreMark applications are already available in **sw/app**, but can be recompiled. 
+This section describes how to build the software environment for the contest. To build any other application available in the **sw/app** folder, replace **mnist** with the name of the application folder : **fft**, **helloworld**, **coremark**...
+
+The executables of MNIST & CoreMark applications are already available in **sw/app**, but can be recompiled. These two are test apps to make sure nothing is broken. But they are not the app we are interested in speeding up.
+
+**The "fft" app is the only one we are interested in for the contest.**
 
 To get the CoreMark source files, apply the patch **coremark.patch**:
 ```
@@ -139,18 +146,16 @@ At the end of the compilation the mnist.riscv executable file must be created.
 ```
 user@[CONTAINER ID]:/workdir/app$ openocd -f openocd_digilent_hs2.cfg &
 [1] 90
-user@[CONTAINER ID]:/workdir/app$ Open On-Chip Debugger 0.11.0-dirty (2023-11-23-09:23)
+user@[CONTAINER ID]:/workdir/app$ Open On-Chip Debugger 0.12.0-g9ea7f3d (2025-09-02-12:20)
 Licensed under GNU GPL v2
 For bug reports, read
-    http://openocd.org/doc/doxygen/bugs.html
-DEPRECATED! use 'adapter driver' not 'interface'
-DEPRECATED! use 'adapter speed' not 'adapter_khz'
+        http://openocd.org/doc/doxygen/bugs.html
 Info : auto-selecting first available session transport "jtag". To override use 'transport select <transport>'.
 Info : clock speed 1000 kHz
 Info : JTAG tap: riscv.cpu tap/device found: 0x249511c3 (mfg: 0x0e1 (Wintec Industries), part: 0x4951, ver: 0x2)
 Info : datacount=2 progbufsize=8
 Info : Examined RISC-V core; found 1 harts
-Info :  hart 0: XLEN=32, misa=0x40141101
+Info :  hart 0: XLEN=32, misa=0x40141105
 Info : starting gdb server for riscv.cpu on 3333
 Info : Listening on port 3333 for gdb connections
 Ready for Remote Connections
@@ -160,7 +165,7 @@ Info : Listening on port 4444 for telnet connections
 
 5. In the Docker container (same terminal), launch **gdb** as following:
 ```
-user@[CONTAINER ID]:/workdir/app$ riscv-none-elf-gdb mnist.riscv
+user@[CONTAINER ID]:/workdir/app$ riscv-none-elf-gdb -ex 'target extended-remote :3333' mnist.riscv
 GNU gdb (GDB) 14.0.50.20230114-git
 Copyright (C) 2022 Free Software Foundation, Inc.
 License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
@@ -180,17 +185,7 @@ Reading symbols from mnist.riscv...
 (gdb)
 ```
 
-6. In **gdb**, you need to connect gdb to **openocd** as following:
-```
-(gdb) target remote :3333
-Remote debugging using :3333
-Info : accepting 'gdb' connection on tcp/3333
-Warn : Prefer GDB command "target extended-remote 3333" instead of "target remote 3333"
-0x00010ec4 in ?? ()
-(gdb)
-```
-
-7. In **gdb**, load **mnist.riscv** to CV32A6 FPGA platform by the load command:
+6. In **gdb**, load **mnist.riscv** to CV32A6 FPGA platform by the load command:
 ```
 (gdb) load
 Loading section .vectors, size 0x80 lma 0x80000000
@@ -205,14 +200,14 @@ Transfer rate: 57 KB/sec, 9579 bytes/write.
 (gdb) 
 ```
 
-8. At last, in gdb, you can run the **mnist** application by command **c**:
+7. At last, in **gdb**, you can run the **mnist** application by command **c**:
 ```
 (gdb) c
 Continuing.
 (gdb) 
 ```
 
-9. On the hyperterminal configured on /dev/ttyUSB0 11520-8-N-1, you should see:
+8. On the hyperterminal configured on /dev/ttyUSB0 11520-8-N-1, you should see:
 ```
 Expected  = 4
 Predicted = 4
@@ -222,8 +217,8 @@ image env0003: 1753389 instructions
 image env0003: 2818904 cycles
 ```
 
-This result is obtained just after the FPGA bitstream loading.
-When MNIST is rerun system is not at initial state. For instance, cache is preloaded.
+This result is obtained right after the FPGA bitstream loading.
+When MNIST is rerun, system is not at initial state. For instance, cache is preloaded.
 
 
 # Simulation get started
@@ -232,11 +227,11 @@ Some software applications are available into the **sw/app** directory. Especial
 
 To simulate a software application on CVA6 processor, run the following command:
 ```
-$ make sim APP=’application to run’
+make sim APP=’application to run’
 ```
 For instance, if you want to run the **mnist** application, you will have to run :
 ```
-$ make sim APP=mnist
+make sim APP=mnist
 ```
 
 **This command:**
@@ -248,7 +243,7 @@ Questa tool will open with waveform window. Some signals will be displayed; you 
 
 Moreover, all `printf` used in software application will be displayed into the **transcript** window of Questa Sim and save into **uart** file to the root directory.
 
-> Simulation may take lot of time, so you need to be patient to have results.
+> Simulation may take a lot of time, you need to be patient to have results.
 
 Simulation is programmed to run 10000000 cycles but the result is displayed before the end of simulation.
 
@@ -273,24 +268,15 @@ That allows to have an estimation of the logical resources used by the CVA6 in t
 
 Command to run synthesis and place & route in "out of context" mode:
 ```
-$ make cva6_ooc CLK_PERIOD_NS=<period of the architecture in ns>
+make cva6_ooc CLK_PERIOD_NS=<period of the architecture in ns>
 ```
 For example, if you want to clock the architecture to 50 MHz, you have to run:
 ```
-$ make cva6_ooc CLK_PERIOD_NS=20
+make cva6_ooc CLK_PERIOD_NS=20
 ```
 By default, synthesis is performed in batch mode, however it is possible to run this command using Vivado GUI:
 ```
-$ make cva6_ooc CLK_PERIOD_NS=20 BATCH_MODE=0
+make cva6_ooc CLK_PERIOD_NS=20 BATCH_MODE=0
 ```
 This command generates synthesis and place and route reports in **corev_apu/fpga/reports_cva6_ooc_synth** and **corev_apu/fpga/reports_cva6_ooc_impl**.
-
-
-
-
-
-
-
-
-
 
