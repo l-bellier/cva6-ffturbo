@@ -33,6 +33,4 @@
 #-force -part $::env(XILINX_PART)
 #set_property board_part $::env(XILINX_BOARD) [current_project]
 
-#compile_simlib -simulator questa -simulator_exec_path {/opt/mentor/questa/2019.4_1/questasim/bin} -family zynq -language all -library all -dir {/home/sjacq/Work_dir/USE_CASE/2021/cva6_contest_2021_2022/cva6-softcore-contest_integration/fpga/lib_xilinx_questa} -force -verbose 
-
 compile_simlib -simulator questa -simulator_exec_path $::env(QUESTA_BIN) -family zynq -language all -library all -dir $::env(LIB_XILINX_QUESTA_PATH) -force -verbose 
