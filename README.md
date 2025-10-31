@@ -91,11 +91,6 @@ The executables of MNIST & CoreMark applications are already available in **sw/a
 
 **The "fft" app is the only one we are interested in for the contest.**
 
-To get the CoreMark source files, apply the patch **coremark.patch**:
-```
-git apply coremark.patch
-```
-
 ### Building the docker image
 
 Install Docker on the workstation.
