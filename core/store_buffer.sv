@@ -17,7 +17,9 @@
 module store_buffer
   import ariane_pkg::*;
 #(
-    parameter config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty
+    parameter config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty,
+    parameter type dcache_req_i_t = logic,
+    parameter type dcache_req_o_t = logic
 ) (
     input logic clk_i,  // Clock
     input logic rst_ni,  // Asynchronous reset active low
@@ -38,10 +40,10 @@ module store_buffer
     input logic valid_i,  // this is a valid store
     input  logic         valid_without_flush_i, // just tell if the address is valid which we are current putting and do not take any further action
 
-    input  logic [riscv::PLEN-1:0]  paddr_i,         // physical address of store which needs to be placed in the queue
-    output [riscv::PLEN-1:0] mem_paddr_o,
-    input riscv::xlen_t data_i,  // data which is placed in the queue
-    input logic [(riscv::XLEN/8)-1:0] be_i,  // byte enable in
+    input  logic [CVA6Cfg.PLEN-1:0]  paddr_i,         // physical address of store which needs to be placed in the queue
+    output logic [CVA6Cfg.PLEN-1:0] rvfi_mem_paddr_o,
+    input logic [CVA6Cfg.XLEN-1:0] data_i,  // data which is placed in the queue
+    input logic [(CVA6Cfg.XLEN/8)-1:0] be_i,  // byte enable in
     input logic [1:0] data_size_i,  // type of request we are making (e.g.: bytes to write)
 
     // D$ interface
@@ -53,9 +55,9 @@ module store_buffer
   // 1. Speculative queue
   // 2. Commit queue which is non-speculative, e.g.: the store will definitely happen.
   struct packed {
-    logic [riscv::PLEN-1:0] address;
-    riscv::xlen_t data;
-    logic [(riscv::XLEN/8)-1:0] be;
+    logic [CVA6Cfg.PLEN-1:0] address;
+    logic [CVA6Cfg.XLEN-1:0] data;
+    logic [(CVA6Cfg.XLEN/8)-1:0] be;
     logic [1:0] data_size;
     logic valid;  // this entry is valid, we need this for checking if the address offset matches
   }
@@ -83,7 +85,6 @@ module store_buffer
     speculative_status_cnt      = speculative_status_cnt_q;
 
     // default assignments
-    speculative_status_cnt_n    = speculative_status_cnt_q;
     speculative_read_pointer_n  = speculative_read_pointer_q;
     speculative_write_pointer_n = speculative_write_pointer_q;
     speculative_queue_n         = speculative_queue_q;
@@ -139,16 +140,17 @@ module store_buffer
   // we do not require an acknowledgement for writes, thus we do not need to identify uniquely the responses
   assign req_port_o.data_id = '0;
   // those signals can directly be output to the memory
-  assign req_port_o.address_index = commit_queue_q[commit_read_pointer_q].address[ariane_pkg::DCACHE_INDEX_WIDTH-1:0];
+  assign req_port_o.address_index = commit_queue_q[commit_read_pointer_q].address[CVA6Cfg.DCACHE_INDEX_WIDTH-1:0];
   // if we got a new request we already saved the tag from the previous cycle
-  assign req_port_o.address_tag   = commit_queue_q[commit_read_pointer_q].address[ariane_pkg::DCACHE_TAG_WIDTH     +
-                                                                                    ariane_pkg::DCACHE_INDEX_WIDTH-1 :
-                                                                                    ariane_pkg::DCACHE_INDEX_WIDTH];
+  assign req_port_o.address_tag   = commit_queue_q[commit_read_pointer_q].address[CVA6Cfg.DCACHE_TAG_WIDTH     +
+                                                                                    CVA6Cfg.DCACHE_INDEX_WIDTH-1 :
+                                                                                    CVA6Cfg.DCACHE_INDEX_WIDTH];
   assign req_port_o.data_wdata = commit_queue_q[commit_read_pointer_q].data;
+  assign req_port_o.data_wuser = '0;
   assign req_port_o.data_be = commit_queue_q[commit_read_pointer_q].be;
   assign req_port_o.data_size = commit_queue_q[commit_read_pointer_q].data_size;
 
-  assign mem_paddr_o = commit_queue_n[commit_read_pointer_n].address;
+  assign rvfi_mem_paddr_o = speculative_queue_q[speculative_read_pointer_q].address;
 
   always_comb begin : store_if
     automatic logic [$clog2(DEPTH_COMMIT):0] commit_status_cnt;

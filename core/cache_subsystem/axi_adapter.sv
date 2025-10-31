@@ -31,7 +31,7 @@ module axi_adapter #(
     input ariane_pkg::ad_req_t type_i,
     input ariane_pkg::amo_t amo_i,
     output logic gnt_o,
-    input logic [riscv::XLEN-1:0] addr_i,
+    input logic [CVA6Cfg.XLEN-1:0] addr_i,
     input logic we_i,
     input logic [(DATA_WIDTH/CVA6Cfg.AxiDataWidth)-1:0][CVA6Cfg.AxiDataWidth-1:0] wdata_i,
     input logic [(DATA_WIDTH/CVA6Cfg.AxiDataWidth)-1:0][(CVA6Cfg.AxiDataWidth/8)-1:0] be_i,
@@ -55,7 +55,11 @@ module axi_adapter #(
       DATA_WIDTH / CVA6Cfg.AxiDataWidth
   ) : 1;
   localparam MAX_OUTSTANDING_AW = CVA6Cfg.MaxOutstandingStores;
-  localparam MAX_OUTSTANDING_AW_CNT_WIDTH = $clog2(MAX_OUTSTANDING_AW + 1) > 0 ? $clog2(MAX_OUTSTANDING_AW + 1) : 1;
+  localparam MAX_OUTSTANDING_AW_CNT_WIDTH = $clog2(
+      MAX_OUTSTANDING_AW + 1
+  ) > 0 ? $clog2(
+      MAX_OUTSTANDING_AW + 1
+  ) : 1;
 
   typedef logic [MAX_OUTSTANDING_AW_CNT_WIDTH-1:0] outstanding_aw_cnt_t;
 
@@ -197,7 +201,7 @@ module axi_adapter #(
               end else begin
                 // bursts of AMOs unsupported
                 assert (amo_i == ariane_pkg::AMO_NONE)
-                else $fatal("Bursts of atomic operations are not supported");
+                else $fatal(1, "Bursts of atomic operations are not supported");
 
                 axi_req_o.aw.len = BURST_SIZE[7:0];  // number of bursts to do
                 axi_req_o.w.data = wdata_i[0];
@@ -228,7 +232,7 @@ module axi_adapter #(
               gnt_o = axi_resp_i.ar_ready;
               if (type_i != ariane_pkg::SINGLE_REQ) begin
                 assert (amo_i == ariane_pkg::AMO_NONE)
-                else $fatal("Bursts of atomic operations are not supported");
+                else $fatal(1, "Bursts of atomic operations are not supported");
 
                 axi_req_o.ar.len = BURST_SIZE[7:0];
                 cnt_d = BURST_SIZE[ADDR_INDEX-1:0];
@@ -369,8 +373,8 @@ module axi_adapter #(
               end
             end
           end
-        // if the request was not an atomic we can possibly issue
-        // other requests while waiting for the response
+          // if the request was not an atomic we can possibly issue
+          // other requests while waiting for the response
         end else begin
           if ((amo_q == ariane_pkg::AMO_NONE) && (outstanding_aw_cnt_q != MAX_OUTSTANDING_AW)) begin
             state_d = IDLE;

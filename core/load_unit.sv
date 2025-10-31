@@ -21,35 +21,63 @@
 module load_unit
   import ariane_pkg::*;
 #(
-    parameter config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty
+    parameter config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty,
+    parameter type dcache_req_i_t = logic,
+    parameter type dcache_req_o_t = logic,
+    parameter type exception_t = logic,
+    parameter type lsu_ctrl_t = logic
 ) (
-    input logic clk_i,  // Clock
-    input logic rst_ni,  // Asynchronous reset active low
+    // Subsystem Clock - SUBSYSTEM
+    input logic clk_i,
+    // Asynchronous reset active low - SUBSYSTEM
+    input logic rst_ni,
+    // Flush signal - CONTROLLER
     input logic flush_i,
-    // load unit input port
+    // Load request is valid - LSU_BYPASS
     input logic valid_i,
+    // Load request input - LSU_BYPASS
     input lsu_ctrl_t lsu_ctrl_i,
+    // Pop the load request from the LSU bypass FIFO - LSU_BYPASS
     output logic pop_ld_o,
-    // load unit output port
+    // Load unit result is valid - ISSUE_STAGE
     output logic valid_o,
-    output logic [TRANS_ID_BITS-1:0] trans_id_o,
-    output riscv::xlen_t result_o,
+    // Load transaction ID - ISSUE_STAGE
+    output logic [CVA6Cfg.TRANS_ID_BITS-1:0] trans_id_o,
+    // Load result - ISSUE_STAGE
+    output logic [CVA6Cfg.XLEN-1:0] result_o,
+    // Load exception - ISSUE_STAGE
     output exception_t ex_o,
-    // MMU -> Address Translation
-    output logic translation_req_o,  // request address translation
-    output logic [riscv::VLEN-1:0] vaddr_o,  // virtual address out
-    input logic [riscv::PLEN-1:0] paddr_i,  // physical address in
-    input  exception_t               ex_i,                // exception which may has happened earlier. for example: mis-aligned exception
-    input logic dtlb_hit_i,  // hit on the dtlb, send in the same cycle as the request
-    input  logic [riscv::PPNW-1:0]   dtlb_ppn_i,          // ppn on the dtlb, send in the same cycle as the request
-    // address checker
+    // Request address translation - MMU
+    output logic translation_req_o,
+    // Virtual address - MMU
+    output logic [CVA6Cfg.VLEN-1:0] vaddr_o,
+    // Transformed trap instruction out - MMU
+    output logic [31:0] tinst_o,
+    // Instruction is a hyp load store instruction - MMU
+    output logic hs_ld_st_inst_o,
+    // Hyp load store with execute permissions - MMU
+    output logic hlvx_inst_o,
+    // Physical address - MMU
+    input logic [CVA6Cfg.PLEN-1:0] paddr_i,
+    // Excepted which appears before load - MMU
+    input exception_t ex_i,
+    // Data TLB hit - MMU
+    input logic dtlb_hit_i,
+    // Physical page number from the DTLB - MMU
+    input logic [CVA6Cfg.PPNW-1:0] dtlb_ppn_i,
+    // Page offset for address checking - STORE_UNIT
     output logic [11:0] page_offset_o,
+    // Indicates if the page offset matches a store unit entry - STORE_UNIT
     input logic page_offset_matches_i,
-    input logic store_buffer_empty_i,  // the entire store-buffer is empty
-    input logic [TRANS_ID_BITS-1:0] commit_tran_id_i,
-    // D$ interface
+    // Store buffer is empty - STORE_UNIT
+    input logic store_buffer_empty_i,
+    // Transaction ID of the committing instruction - COMMIT_STAGE
+    input logic [CVA6Cfg.TRANS_ID_BITS-1:0] commit_tran_id_i,
+    // Data cache request out - CACHES
     input dcache_req_o_t req_port_i,
+    // Data cache request in - CACHES
     output dcache_req_i_t req_port_o,
+    // Presence of non-idempotent operations in the D$ write buffer - CACHES
     input logic dcache_wbuffer_not_ni_i
 );
   enum logic [3:0] {
@@ -68,9 +96,9 @@ module load_unit
   // in order to decouple the response interface from the request interface,
   // we need a a buffer which can hold all inflight memory load requests
   typedef struct packed {
-    logic [TRANS_ID_BITS-1:0]           trans_id;        // scoreboard identifier
-    logic [riscv::XLEN_ALIGN_BYTES-1:0] address_offset;  // least significant bits of the address
-    fu_op                               operation;       // type of load
+    logic [CVA6Cfg.TRANS_ID_BITS-1:0]    trans_id;        // scoreboard identifier
+    logic [CVA6Cfg.XLEN_ALIGN_BYTES-1:0] address_offset;  // least significant bits of the address
+    fu_op                                operation;       // type of load
   } ldbuf_t;
 
 
@@ -161,35 +189,44 @@ module load_unit
   assign page_offset_o = lsu_ctrl_i.vaddr[11:0];
   // feed-through the virtual address for VA translation
   assign vaddr_o = lsu_ctrl_i.vaddr;
+  assign hs_ld_st_inst_o = CVA6Cfg.RVH ? lsu_ctrl_i.hs_ld_st_inst : 1'b0;
+  assign hlvx_inst_o = CVA6Cfg.RVH ? lsu_ctrl_i.hlvx_inst : 1'b0;
+  // feed-through the transformed instruction for mmu
+  assign tinst_o = CVA6Cfg.RVH ? lsu_ctrl_i.tinst : '0;
   // this is a read-only interface so set the write enable to 0
   assign req_port_o.data_we = 1'b0;
   assign req_port_o.data_wdata = '0;
   // compose the load buffer write data, control is handled in the FSM
   assign ldbuf_wdata = {
-    lsu_ctrl_i.trans_id, lsu_ctrl_i.vaddr[riscv::XLEN_ALIGN_BYTES-1:0], lsu_ctrl_i.operation
+    lsu_ctrl_i.trans_id, lsu_ctrl_i.vaddr[CVA6Cfg.XLEN_ALIGN_BYTES-1:0], lsu_ctrl_i.operation
   };
   // output address
   // we can now output the lower 12 bit as the index to the cache
-  assign req_port_o.address_index = lsu_ctrl_i.vaddr[ariane_pkg::DCACHE_INDEX_WIDTH-1:0];
+  assign req_port_o.address_index = lsu_ctrl_i.vaddr[CVA6Cfg.DCACHE_INDEX_WIDTH-1:0];
   // translation from last cycle, again: control is handled in the FSM
-  assign req_port_o.address_tag   = paddr_i[ariane_pkg::DCACHE_TAG_WIDTH     +
-                                              ariane_pkg::DCACHE_INDEX_WIDTH-1 :
-                                              ariane_pkg::DCACHE_INDEX_WIDTH];
+  assign req_port_o.address_tag   = paddr_i[CVA6Cfg.DCACHE_TAG_WIDTH     +
+                                              CVA6Cfg.DCACHE_INDEX_WIDTH-1 :
+                                              CVA6Cfg.DCACHE_INDEX_WIDTH];
   // request id = index of the load buffer's entry
   assign req_port_o.data_id = ldbuf_windex;
   // directly forward exception fields (valid bit is set below)
   assign ex_o.cause = ex_i.cause;
   assign ex_o.tval = ex_i.tval;
+  assign ex_o.tval2 = CVA6Cfg.RVH ? ex_i.tval2 : '0;
+  assign ex_o.tinst = CVA6Cfg.RVH ? ex_i.tinst : '0;
+  assign ex_o.gva = CVA6Cfg.RVH ? ex_i.gva : 1'b0;
 
   // Check that NI operations follow the necessary conditions
   logic paddr_ni;
   logic not_commit_time;
   logic inflight_stores;
   logic stall_ni;
-  assign paddr_ni = config_pkg::is_inside_nonidempotent_regions(CVA6Cfg, {{52-riscv::PPNW{1'b0}}, dtlb_ppn_i, 12'd0});
+  assign paddr_ni = config_pkg::is_inside_nonidempotent_regions(
+      CVA6Cfg, {{52 - CVA6Cfg.PPNW{1'b0}}, dtlb_ppn_i, 12'd0}
+  );
   assign not_commit_time = commit_tran_id_i != lsu_ctrl_i.trans_id;
   assign inflight_stores = (!dcache_wbuffer_not_ni_i || !store_buffer_empty_i);
-  assign stall_ni = (inflight_stores || not_commit_time) && paddr_ni;
+  assign stall_ni = (inflight_stores || not_commit_time) && (paddr_ni && CVA6Cfg.NonIdemPotenceEn);
 
   // ---------------
   // Load Control
@@ -227,7 +264,7 @@ module load_unit
             if (!req_port_i.data_gnt) begin
               state_d = WAIT_GNT;
             end else begin
-              if (ariane_pkg::MMU_PRESENT && !dtlb_hit_i) begin
+              if (CVA6Cfg.MmuPresent && !dtlb_hit_i) begin
                 state_d = ABORT_TRANSACTION;
               end else begin
                 if (!stall_ni) begin
@@ -235,7 +272,7 @@ module load_unit
                   state_d  = SEND_TAG;
                   pop_ld_o = 1'b1;
                   // translation valid but this is to NC and the WB is not yet empty.
-                end else begin
+                end else if (CVA6Cfg.NonIdemPotenceEn) begin
                   state_d = ABORT_TRANSACTION_NI;
                 end
               end
@@ -255,36 +292,6 @@ module load_unit
         end
       end
 
-      // abort the previous request - free the D$ arbiter
-      // we are here because of a TLB miss, we need to abort the current request and give way for the
-      // PTW walker to satisfy the TLB miss
-      ABORT_TRANSACTION, ABORT_TRANSACTION_NI: begin
-        req_port_o.kill_req = 1'b1;
-        req_port_o.tag_valid = 1'b1;
-        // either re-do the request or wait until the WB is empty (depending on where we came from).
-        state_d = (state_q == ABORT_TRANSACTION_NI) ? WAIT_WB_EMPTY : WAIT_TRANSLATION;
-      end
-
-      // Wait until the write-back buffer is empty in the data cache.
-      WAIT_WB_EMPTY: begin
-        // the write buffer is empty, so lets go and re-do the translation.
-        if (dcache_wbuffer_not_ni_i) state_d = WAIT_TRANSLATION;
-      end
-
-      WAIT_TRANSLATION: begin
-        translation_req_o = 1'b1;
-        // we've got a hit and we can continue with the request process
-        if (dtlb_hit_i) state_d = WAIT_GNT;
-
-        // we got an exception
-        if (ex_i.valid) begin
-          // the next state will be the idle state
-          state_d  = IDLE;
-          // pop load - but only if we are not getting an rvalid in here - otherwise we will over-write an incoming transaction
-          pop_ld_o = ~req_port_i.data_rvalid;
-        end
-      end
-
       WAIT_GNT: begin
         // keep the translation request up
         translation_req_o   = 1'b1;
@@ -293,7 +300,7 @@ module load_unit
         // we finally got a data grant
         if (req_port_i.data_gnt) begin
           // so we send the tag in the next cycle
-          if (ariane_pkg::MMU_PRESENT && !dtlb_hit_i) begin
+          if (CVA6Cfg.MmuPresent && !dtlb_hit_i) begin
             state_d = ABORT_TRANSACTION;
           end else begin
             if (!stall_ni) begin
@@ -301,7 +308,7 @@ module load_unit
               state_d  = SEND_TAG;
               pop_ld_o = 1'b1;
               // translation valid but this is to NC and the WB is not yet empty.
-            end else begin
+            end else if (CVA6Cfg.NonIdemPotenceEn) begin
               state_d = ABORT_TRANSACTION_NI;
             end
           end
@@ -327,7 +334,7 @@ module load_unit
               state_d = WAIT_GNT;
             end else begin
               // we got a grant so we can send the tag in the next cycle
-              if (ariane_pkg::MMU_PRESENT && !dtlb_hit_i) begin
+              if (CVA6Cfg.MmuPresent && !dtlb_hit_i) begin
                 state_d = ABORT_TRANSACTION;
               end else begin
                 if (!stall_ni) begin
@@ -335,7 +342,7 @@ module load_unit
                   state_d  = SEND_TAG;
                   pop_ld_o = 1'b1;
                   // translation valid but this is to NC and the WB is not yet empty.
-                end else begin
+                end else if (CVA6Cfg.NonIdemPotenceEn) begin
                   state_d = ABORT_TRANSACTION_NI;
                 end
               end
@@ -363,7 +370,40 @@ module load_unit
         state_d = IDLE;
       end
 
-      default: state_d = IDLE;
+      default: begin
+        // abort the previous request - free the D$ arbiter
+        // we are here because of a TLB miss, we need to abort the current request and give way for the
+        // PTW walker to satisfy the TLB miss
+        if (state_q == ABORT_TRANSACTION && CVA6Cfg.MmuPresent) begin
+          req_port_o.kill_req = 1'b1;
+          req_port_o.tag_valid = 1'b1;
+          // wait until the WB is empty
+          state_d = WAIT_TRANSLATION;
+        end else if (state_q == ABORT_TRANSACTION_NI && CVA6Cfg.NonIdemPotenceEn) begin
+          req_port_o.kill_req = 1'b1;
+          req_port_o.tag_valid = 1'b1;
+          // re-do the request
+          state_d = WAIT_WB_EMPTY;
+        end else if (state_q == WAIT_WB_EMPTY && CVA6Cfg.NonIdemPotenceEn && dcache_wbuffer_not_ni_i) begin
+          // Wait until the write-back buffer is empty in the data cache.
+          // the write buffer is empty, so lets go and re-do the translation.
+          state_d = WAIT_TRANSLATION;
+        end else if(state_q == WAIT_TRANSLATION && (CVA6Cfg.MmuPresent || CVA6Cfg.NonIdemPotenceEn)) begin
+          translation_req_o = 1'b1;
+          // we've got a hit and we can continue with the request process
+          if (dtlb_hit_i) state_d = WAIT_GNT;
+
+          // we got an exception
+          if (ex_i.valid) begin
+            // the next state will be the idle state
+            state_d  = IDLE;
+            // pop load - but only if we are not getting an rvalid in here - otherwise we will over-write an incoming transaction
+            pop_ld_o = ~req_port_i.data_rvalid;
+          end
+        end else begin
+          state_d = IDLE;
+        end
+      end
     endcase
 
     // if we just flushed and the queue is not empty or we are getting an rvalid this cycle wait in a extra stage
@@ -406,7 +446,7 @@ module load_unit
     // exceptions can retire out-of-order -> but we need to give priority to non-excepting load and stores
     // so we simply check if we got an rvalid if so we prioritize it by not retiring the exception - we simply go for another
     // round in the load FSM
-    if ((state_q == WAIT_TRANSLATION) && !req_port_i.data_rvalid && ex_i.valid && valid_i) begin
+    if ((CVA6Cfg.MmuPresent || CVA6Cfg.NonIdemPotenceEn) && (state_q == WAIT_TRANSLATION) && !req_port_i.data_rvalid && ex_i.valid && valid_i) begin
       trans_id_o = lsu_ctrl_i.trans_id;
       valid_o = 1'b1;
       ex_o.valid = 1'b1;
@@ -426,7 +466,7 @@ module load_unit
   // ---------------
   // Sign Extend
   // ---------------
-  riscv::xlen_t shifted_data;
+  logic [CVA6Cfg.XLEN-1:0] shifted_data;
 
   // realign as needed
   assign shifted_data = req_port_i.data_rdata >> {ldbuf_rdata.address_offset, 3'b000};
@@ -446,53 +486,57 @@ module load_unit
     end  */
 
   // result mux fast
-  logic [        (riscv::XLEN/8)-1:0] rdata_sign_bits;
-  logic [riscv::XLEN_ALIGN_BYTES-1:0] rdata_offset;
+  logic [        (CVA6Cfg.XLEN/8)-1:0] rdata_sign_bits;
+  logic [CVA6Cfg.XLEN_ALIGN_BYTES-1:0] rdata_offset;
   logic rdata_sign_bit, rdata_is_signed, rdata_is_fp_signed;
 
 
   // prepare these signals for faster selection in the next cycle
-  assign rdata_is_signed    =   ldbuf_rdata.operation inside {ariane_pkg::LW,  ariane_pkg::LH,  ariane_pkg::LB};
+  assign rdata_is_signed    =   ldbuf_rdata.operation inside {ariane_pkg::LW,  ariane_pkg::LH,  ariane_pkg::LB, ariane_pkg::HLV_W, ariane_pkg::HLV_H, ariane_pkg::HLV_B};
   assign rdata_is_fp_signed =   ldbuf_rdata.operation inside {ariane_pkg::FLW, ariane_pkg::FLH, ariane_pkg::FLB};
-  assign rdata_offset       = ((ldbuf_rdata.operation inside {ariane_pkg::LW,  ariane_pkg::FLW}) & riscv::IS_XLEN64) ? ldbuf_rdata.address_offset + 3 :
-                                ( ldbuf_rdata.operation inside {ariane_pkg::LH,  ariane_pkg::FLH})                     ? ldbuf_rdata.address_offset + 1 :
+  assign rdata_offset       = ((ldbuf_rdata.operation inside {ariane_pkg::LW,  ariane_pkg::FLW, ariane_pkg::HLV_W}) & CVA6Cfg.IS_XLEN64) ? ldbuf_rdata.address_offset + 3 :
+                                ( ldbuf_rdata.operation inside {ariane_pkg::LH,  ariane_pkg::FLH, ariane_pkg::HLV_H})                     ? ldbuf_rdata.address_offset + 1 :
                                                                                                                          ldbuf_rdata.address_offset;
 
-  for (genvar i = 0; i < (riscv::XLEN / 8); i++) begin : gen_sign_bits
+  for (genvar i = 0; i < (CVA6Cfg.XLEN / 8); i++) begin : gen_sign_bits
     assign rdata_sign_bits[i] = req_port_i.data_rdata[(i+1)*8-1];
   end
 
 
   // select correct sign bit in parallel to result shifter above
   // pull to 0 if unsigned
-  assign rdata_sign_bit = rdata_is_signed & rdata_sign_bits[rdata_offset] | rdata_is_fp_signed;
+  assign rdata_sign_bit = rdata_is_signed & rdata_sign_bits[rdata_offset] | (CVA6Cfg.FpPresent && rdata_is_fp_signed);
 
   // result mux
   always_comb begin
     unique case (ldbuf_rdata.operation)
-      ariane_pkg::LW, ariane_pkg::LWU:
-      result_o = {{riscv::XLEN - 32{rdata_sign_bit}}, shifted_data[31:0]};
-      ariane_pkg::LH, ariane_pkg::LHU:
-      result_o = {{riscv::XLEN - 32 + 16{rdata_sign_bit}}, shifted_data[15:0]};
-      ariane_pkg::LB, ariane_pkg::LBU:
-      result_o = {{riscv::XLEN - 32 + 24{rdata_sign_bit}}, shifted_data[7:0]};
-      ariane_pkg::FLW: begin
+      ariane_pkg::LW, ariane_pkg::LWU, ariane_pkg::HLV_W, ariane_pkg::HLV_WU, ariane_pkg::HLVX_WU:
+      result_o = {{CVA6Cfg.XLEN - 32{rdata_sign_bit}}, shifted_data[31:0]};
+      ariane_pkg::LH, ariane_pkg::LHU, ariane_pkg::HLV_H, ariane_pkg::HLV_HU, ariane_pkg::HLVX_HU:
+      result_o = {{CVA6Cfg.XLEN - 32 + 16{rdata_sign_bit}}, shifted_data[15:0]};
+      ariane_pkg::LB, ariane_pkg::LBU, ariane_pkg::HLV_B, ariane_pkg::HLV_BU:
+      result_o = {{CVA6Cfg.XLEN - 32 + 24{rdata_sign_bit}}, shifted_data[7:0]};
+      default: begin
+        // FLW, FLH and FLB have been defined here in default case to improve Code Coverage
         if (CVA6Cfg.FpPresent) begin
-          result_o = {{riscv::XLEN - 32{rdata_sign_bit}}, shifted_data[31:0]};
+          unique case (ldbuf_rdata.operation)
+            ariane_pkg::FLW: begin
+              result_o = {{CVA6Cfg.XLEN - 32{rdata_sign_bit}}, shifted_data[31:0]};
+            end
+            ariane_pkg::FLH: begin
+              result_o = {{CVA6Cfg.XLEN - 32 + 16{rdata_sign_bit}}, shifted_data[15:0]};
+            end
+            ariane_pkg::FLB: begin
+              result_o = {{CVA6Cfg.XLEN - 32 + 24{rdata_sign_bit}}, shifted_data[7:0]};
+            end
+            default: begin
+              result_o = shifted_data[CVA6Cfg.XLEN-1:0];
+            end
+          endcase
+        end else begin
+          result_o = shifted_data[CVA6Cfg.XLEN-1:0];
         end
       end
-      ariane_pkg::FLH: begin
-        if (CVA6Cfg.FpPresent) begin
-          result_o = {{riscv::XLEN - 32 + 16{rdata_sign_bit}}, shifted_data[15:0]};
-        end
-      end
-      ariane_pkg::FLB: begin
-        if (CVA6Cfg.FpPresent) begin
-          result_o = {{riscv::XLEN - 32 + 24{rdata_sign_bit}}, shifted_data[7:0]};
-        end
-      end
-
-      default: result_o = shifted_data[riscv::XLEN-1:0];
     endcase
   end
   // end result mux fast
@@ -502,10 +546,9 @@ module load_unit
   ///////////////////////////////////////////////////////
 
   //pragma translate_off
-`ifndef VERILATOR
   initial
-    assert (ariane_pkg::DCACHE_TID_WIDTH >= REQ_ID_BITS)
-    else $fatal(1, "CVA6ConfigDcacheIdWidth parameter is not wide enough to encode pending loads");
+    assert (CVA6Cfg.DcacheIdWidth >= REQ_ID_BITS)
+    else $fatal(1, "DcacheIdWidth parameter is not wide enough to encode pending loads");
   // check invalid offsets, but only issue a warning as these conditions actually trigger a load address misaligned exception
   addr_offset0 :
   assert property (@(posedge clk_i) disable iff (~rst_ni)
@@ -519,7 +562,6 @@ module load_unit
   assert property (@(posedge clk_i) disable iff (~rst_ni)
         ldbuf_w |->  (ldbuf_wdata.operation inside {ariane_pkg::LB, ariane_pkg::LBU}) |-> ldbuf_wdata.address_offset < 8)
   else $fatal(1, "invalid address offset used with {LB, LBU}");
-`endif
   //pragma translate_on
 
 endmodule

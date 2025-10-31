@@ -20,45 +20,19 @@ package riscv;
   // ----------------------
   // Import cva6 config from cva6_config_pkg
   // ----------------------
+  // FIXME stop using them from CoreV-Verif and HPDCache
+  // Then remove them from this package
   localparam XLEN = cva6_config_pkg::CVA6ConfigXlen;
-  localparam FPU_EN = cva6_config_pkg::CVA6ConfigFpuEn;
-
-  // ----------------------
-  // Data and Address length
-  // ----------------------
-  typedef enum logic [3:0] {
-    ModeOff  = 0,
-    ModeSv32 = 1,
-    ModeSv39 = 8,
-    ModeSv48 = 9,
-    ModeSv57 = 10,
-    ModeSv64 = 11
-  } vm_mode_t;
-
-  // Warning: When using STD_CACHE, configuration must be PLEN=56 and VLEN=64
-  // Warning: VLEN must be superior or equal to PLEN
-  localparam VLEN = (XLEN == 32) ? 32 : 64;  // virtual address length
-  localparam PLEN = (XLEN == 32) ? 34 : 56;  // physical address length
-
-  localparam IS_XLEN32 = (XLEN == 32) ? 1'b1 : 1'b0;
-  localparam IS_XLEN64 = (XLEN == 32) ? 1'b0 : 1'b1;
-  localparam ModeW = (XLEN == 32) ? 1 : 4;
-  localparam ASIDW = (XLEN == 32) ? 9 : 16;
-  localparam PPNW = (XLEN == 32) ? 22 : 44;
-  localparam vm_mode_t MODE_SV = (XLEN == 32) ? ModeSv32 : ModeSv39;
-  localparam SV = (MODE_SV == ModeSv32) ? 32 : 39;
-  localparam VPN2 = (VLEN - 31 < 8) ? VLEN - 31 : 8;
-  localparam XLEN_ALIGN_BYTES = $clog2(XLEN / 8);
-
-  typedef logic [XLEN-1:0] xlen_t;
+  localparam PLEN = (XLEN == 32) ? 34 : 56;
 
   // --------------------
   // Privilege Spec
   // --------------------
   typedef enum logic [1:0] {
-    PRIV_LVL_M = 2'b11,
-    PRIV_LVL_S = 2'b01,
-    PRIV_LVL_U = 2'b00
+    PRIV_LVL_M  = 2'b11,
+    PRIV_LVL_HS = 2'b10,
+    PRIV_LVL_S  = 2'b01,
+    PRIV_LVL_U  = 2'b00
   } priv_lvl_t;
 
   // type which holds xlen
@@ -79,7 +53,7 @@ package riscv;
     logic sd;  // signal dirty state - read-only
     logic [62:34] wpri6;  // writes preserved reads ignored
     xlen_e uxl;  // variable user mode xlen - hardwired to zero
-    logic [12:0] wpri5;  // writes preserved reads ignored
+    logic [11:0] wpri5;  // writes preserved reads ignored
     logic mxr;  // make executable readable
     logic sum;  // permit supervisor user memory access
     logic wpri4;  // writes preserved reads ignored
@@ -89,16 +63,39 @@ package riscv;
     xs_t vs;  // vector extension register
     logic spp;  // holds the previous privilege mode up to supervisor
     logic wpri2;  // writes preserved reads ignored
+    logic mpie;  // machine interrupts enable bit active prior to trap
     logic         ube;    // UBE controls whether explicit load and store memory accesses made from U-mode are little-endian (UBE=0) or big-endian (UBE=1)
     logic spie;  // supervisor interrupts enable bit active prior to trap
-    logic [1:0] wpri1;  // writes preserved reads ignored
+    logic [2:0] wpri1;  // writes preserved reads ignored
     logic sie;  // supervisor interrupts enable
     logic wpri0;  // writes preserved reads ignored
   } sstatus_rv_t;
 
   typedef struct packed {
+    logic [63:34] wpri4;  // writes preserved reads ignored
+    xlen_e        vsxl;   // variable virtual supervisor mode xlen - hardwired to zero
+    logic [8:0]   wpri3;  // floating point extension register
+    logic         vtsr;   // virtual trap sret
+    logic         vtw;    // virtual time wait
+    logic         vtvm;   // virtual trap virtual memory
+    logic [1:0]   wpri2;  // writes preserved reads ignored
+    logic [5:0]   vgein;  // virtual guest external interrupt number
+    logic [1:0]   wpri1;  // writes preserved reads ignored
+    logic         hu;     // virtual-machine load/store instructions enable in U-mode
+    logic         spvp;   // supervisor previous virtual privilege
+    logic         spv;    // supervisor previous virtualization mode
+    logic         gva;    // variable set when trap writes to stval
+    logic         vsbe;   // endianness of explicit memory accesses made from VS-mode
+    logic [4:0]   wpri0;  // writes preserved reads ignored
+  } hstatus_rv_t;
+
+  typedef struct packed {
     logic sd;  // signal dirty state - read-only
-    logic [62:36] wpri4;  // writes preserved reads ignored
+    logic [62:40] wpri4;  // writes preserved reads ignored
+    logic mpv;  // machine previous virtualization mode
+    logic gva;  // variable set when trap writes to stval
+    logic mbe;  // endianness memory accesses made from M-mode
+    logic sbe;  // endianness memory accesses made from S-mode
     xlen_e sxl;  // variable supervisor mode xlen - hardwired to zero
     xlen_e uxl;  // variable user mode xlen - hardwired to zero
     logic [8:0] wpri3;  // writes preserved reads ignored
@@ -124,10 +121,15 @@ package riscv;
   } mstatus_rv_t;
 
   typedef struct packed {
-    logic [ModeW-1:0] mode;
-    logic [ASIDW-1:0] asid;
-    logic [PPNW-1:0]  ppn;
-  } satp_t;
+    logic        stce;   // not implemented - requires Sctc extension
+    logic        pbmte;  // not implemented - requires Svpbmt extension
+    logic [61:8] wpri1;  // writes preserved reads ignored
+    logic        cbze;   // not implemented - requires Zicboz extension
+    logic        cbcfe;  // not implemented - requires Zicbom extension
+    logic [1:0]  cbie;   // not implemented - requires Zicbom extension
+    logic [2:0]  wpri0;  // writes preserved reads ignored
+    logic        fiom;   // fence of I/O implies memory
+  } envcfg_rv_t;
 
   // --------------------
   // Instruction Types
@@ -332,34 +334,48 @@ package riscv;
   localparam logic [XLEN-1:0] LD_ACCESS_FAULT = 5;  // Illegal access as governed by PMPs and PMAs
   localparam logic [XLEN-1:0] ST_ADDR_MISALIGNED = 6;
   localparam logic [XLEN-1:0] ST_ACCESS_FAULT = 7;  // Illegal access as governed by PMPs and PMAs
-  localparam logic [XLEN-1:0] ENV_CALL_UMODE = 8;  // environment call from user mode
-  localparam logic [XLEN-1:0] ENV_CALL_SMODE = 9;  // environment call from supervisor mode
+  localparam logic [XLEN-1:0] ENV_CALL_UMODE = 8;  // environment call from user mode or virtual user mode
+  localparam logic [XLEN-1:0] ENV_CALL_SMODE = 9;  // environment call from hypervisor-extended supervisor mode
+  localparam logic [XLEN-1:0] ENV_CALL_VSMODE = 10; // environment call from virtual supervisor mode
   localparam logic [XLEN-1:0] ENV_CALL_MMODE = 11;  // environment call from machine mode
   localparam logic [XLEN-1:0] INSTR_PAGE_FAULT = 12;  // Instruction page fault
   localparam logic [XLEN-1:0] LOAD_PAGE_FAULT = 13;  // Load page fault
   localparam logic [XLEN-1:0] STORE_PAGE_FAULT = 15;  // Store page fault
+  localparam logic [XLEN-1:0] INSTR_GUEST_PAGE_FAULT = 20;  // Instruction guest-page fault
+  localparam logic [XLEN-1:0] LOAD_GUEST_PAGE_FAULT = 21;  // Load guest-page fault
+  localparam logic [XLEN-1:0] VIRTUAL_INSTRUCTION = 22;  // virtual instruction
+  localparam logic [XLEN-1:0] STORE_GUEST_PAGE_FAULT = 23;  // Store guest-page fault
   localparam logic [XLEN-1:0] DEBUG_REQUEST = 24;  // Debug request
 
   localparam int unsigned IRQ_S_SOFT = 1;
+  localparam int unsigned IRQ_VS_SOFT = 2;
   localparam int unsigned IRQ_M_SOFT = 3;
   localparam int unsigned IRQ_S_TIMER = 5;
+  localparam int unsigned IRQ_VS_TIMER = 6;
   localparam int unsigned IRQ_M_TIMER = 7;
   localparam int unsigned IRQ_S_EXT = 9;
+  localparam int unsigned IRQ_VS_EXT = 10;
   localparam int unsigned IRQ_M_EXT = 11;
+  localparam int unsigned IRQ_HS_EXT = 12;
 
-  localparam logic [XLEN-1:0] MIP_SSIP = 1 << IRQ_S_SOFT;
-  localparam logic [XLEN-1:0] MIP_MSIP = 1 << IRQ_M_SOFT;
-  localparam logic [XLEN-1:0] MIP_STIP = 1 << IRQ_S_TIMER;
-  localparam logic [XLEN-1:0] MIP_MTIP = 1 << IRQ_M_TIMER;
-  localparam logic [XLEN-1:0] MIP_SEIP = 1 << IRQ_S_EXT;
-  localparam logic [XLEN-1:0] MIP_MEIP = 1 << IRQ_M_EXT;
+  localparam logic [31:0] MIP_SSIP = 1 << IRQ_S_SOFT;
+  localparam logic [31:0] MIP_VSSIP = 1 << IRQ_VS_SOFT;
+  localparam logic [31:0] MIP_MSIP = 1 << IRQ_M_SOFT;
+  localparam logic [31:0] MIP_STIP = 1 << IRQ_S_TIMER;
+  localparam logic [31:0] MIP_VSTIP = 1 << IRQ_VS_TIMER;
+  localparam logic [31:0] MIP_MTIP = 1 << IRQ_M_TIMER;
+  localparam logic [31:0] MIP_SEIP = 1 << IRQ_S_EXT;
+  localparam logic [31:0] MIP_VSEIP = 1 << IRQ_VS_EXT;
+  localparam logic [31:0] MIP_MEIP = 1 << IRQ_M_EXT;
+  localparam logic [31:0] MIP_SGEIP = 1 << IRQ_HS_EXT;
 
-  localparam logic [XLEN-1:0] S_SW_INTERRUPT = (1 << (XLEN - 1)) | XLEN'(IRQ_S_SOFT);
-  localparam logic [XLEN-1:0] M_SW_INTERRUPT = (1 << (XLEN - 1)) | XLEN'(IRQ_M_SOFT);
-  localparam logic [XLEN-1:0] S_TIMER_INTERRUPT = (1 << (XLEN - 1)) | XLEN'(IRQ_S_TIMER);
-  localparam logic [XLEN-1:0] M_TIMER_INTERRUPT = (1 << (XLEN - 1)) | XLEN'(IRQ_M_TIMER);
-  localparam logic [XLEN-1:0] S_EXT_INTERRUPT = (1 << (XLEN - 1)) | XLEN'(IRQ_S_EXT);
-  localparam logic [XLEN-1:0] M_EXT_INTERRUPT = (1 << (XLEN - 1)) | XLEN'(IRQ_M_EXT);
+  // ----------------------
+  // PseudoInstructions Codes
+  // ----------------------
+  localparam logic [31:0] READ_32_PSEUDOINSTRUCTION = 32'h00002000;
+  localparam logic [31:0] WRITE_32_PSEUDOINSTRUCTION = 32'h00002020;
+  localparam logic [31:0] READ_64_PSEUDOINSTRUCTION = 32'h00003000;
+  localparam logic [31:0] WRITE_64_PSEUDOINSTRUCTION = 32'h00003020;
 
   // -----
   // CSRs
@@ -369,6 +385,8 @@ package riscv;
     CSR_FFLAGS           = 12'h001,
     CSR_FRM              = 12'h002,
     CSR_FCSR             = 12'h003,
+    //jvt
+    CSR_JVT              = 12'h017,
     CSR_FTRAN            = 12'h800,
     // Vector CSRs
     CSR_VSTART           = 12'h008,
@@ -378,17 +396,46 @@ package riscv;
     CSR_VL               = 12'hC20,
     CSR_VTYPE            = 12'hC21,
     CSR_VLENB            = 12'hC22,
+    // Virtual Supervisor Mode CSRs
+    CSR_VSSTATUS         = 12'h200,
+    CSR_VSIE             = 12'h204,
+    CSR_VSTVEC           = 12'h205,
+    CSR_VSSCRATCH        = 12'h240,
+    CSR_VSEPC            = 12'h241,
+    CSR_VSCAUSE          = 12'h242,
+    CSR_VSTVAL           = 12'h243,
+    CSR_VSIP             = 12'h244,
+    CSR_VSATP            = 12'h280,
     // Supervisor Mode CSRs
     CSR_SSTATUS          = 12'h100,
     CSR_SIE              = 12'h104,
     CSR_STVEC            = 12'h105,
     CSR_SCOUNTEREN       = 12'h106,
+    CSR_SENVCFG          = 12'h10A,
     CSR_SSCRATCH         = 12'h140,
     CSR_SEPC             = 12'h141,
     CSR_SCAUSE           = 12'h142,
     CSR_STVAL            = 12'h143,
     CSR_SIP              = 12'h144,
     CSR_SATP             = 12'h180,
+    // Hypervisor-extended Supervisor Mode CSRs
+    CSR_HSTATUS          = 12'h600,
+    CSR_HEDELEG          = 12'h602,
+    CSR_HIDELEG          = 12'h603,
+    CSR_HIE              = 12'h604,
+    CSR_HCOUNTEREN       = 12'h606,
+    CSR_HGEIE            = 12'h607,
+    CSR_HTVAL            = 12'h643,
+    CSR_HIP              = 12'h644,
+    CSR_HVIP             = 12'h645,
+    CSR_HTINST           = 12'h64A,
+    CSR_HGEIP            = 12'hE12,
+    CSR_HENVCFG          = 12'h60A,
+    CSR_HENVCFGH         = 12'h61A,
+    CSR_HGATP            = 12'h680,
+    CSR_HCONTEXT         = 12'h6A8,
+    CSR_HTIMEDELTA       = 12'h605,
+    CSR_HTIMEDELTAH      = 12'h615,
     // Machine Mode CSRs
     CSR_MSTATUS          = 12'h300,
     CSR_MISA             = 12'h301,
@@ -433,10 +480,26 @@ package riscv;
     CSR_MCAUSE           = 12'h342,
     CSR_MTVAL            = 12'h343,
     CSR_MIP              = 12'h344,
+    CSR_MTINST           = 12'h34A,
+    CSR_MTVAL2           = 12'h34B,
+    CSR_MENVCFG          = 12'h30A,
+    CSR_MENVCFGH         = 12'h31A,
     CSR_PMPCFG0          = 12'h3A0,
     CSR_PMPCFG1          = 12'h3A1,
     CSR_PMPCFG2          = 12'h3A2,
     CSR_PMPCFG3          = 12'h3A3,
+    CSR_PMPCFG4          = 12'h3A4,
+    CSR_PMPCFG5          = 12'h3A5,
+    CSR_PMPCFG6          = 12'h3A6,
+    CSR_PMPCFG7          = 12'h3A7,
+    CSR_PMPCFG8          = 12'h3A8,
+    CSR_PMPCFG9          = 12'h3A9,
+    CSR_PMPCFG10         = 12'h3AA,
+    CSR_PMPCFG11         = 12'h3AB,
+    CSR_PMPCFG12         = 12'h3AC,
+    CSR_PMPCFG13         = 12'h3AD,
+    CSR_PMPCFG14         = 12'h3AE,
+    CSR_PMPCFG15         = 12'h3AF,
     CSR_PMPADDR0         = 12'h3B0,
     CSR_PMPADDR1         = 12'h3B1,
     CSR_PMPADDR2         = 12'h3B2,
@@ -453,6 +516,54 @@ package riscv;
     CSR_PMPADDR13        = 12'h3BD,
     CSR_PMPADDR14        = 12'h3BE,
     CSR_PMPADDR15        = 12'h3BF,
+    CSR_PMPADDR16        = 12'h3C0,
+    CSR_PMPADDR17        = 12'h3C1,
+    CSR_PMPADDR18        = 12'h3C2,
+    CSR_PMPADDR19        = 12'h3C3,
+    CSR_PMPADDR20        = 12'h3C4,
+    CSR_PMPADDR21        = 12'h3C5,
+    CSR_PMPADDR22        = 12'h3C6,
+    CSR_PMPADDR23        = 12'h3C7,
+    CSR_PMPADDR24        = 12'h3C8,
+    CSR_PMPADDR25        = 12'h3C9,
+    CSR_PMPADDR26        = 12'h3CA,
+    CSR_PMPADDR27        = 12'h3CB,
+    CSR_PMPADDR28        = 12'h3CC,
+    CSR_PMPADDR29        = 12'h3CD,
+    CSR_PMPADDR30        = 12'h3CE,
+    CSR_PMPADDR31        = 12'h3CF,
+    CSR_PMPADDR32        = 12'h3D0,
+    CSR_PMPADDR33        = 12'h3D1,
+    CSR_PMPADDR34        = 12'h3D2,
+    CSR_PMPADDR35        = 12'h3D3,
+    CSR_PMPADDR36        = 12'h3D4,
+    CSR_PMPADDR37        = 12'h3D5,
+    CSR_PMPADDR38        = 12'h3D6,
+    CSR_PMPADDR39        = 12'h3D7,
+    CSR_PMPADDR40        = 12'h3D8,
+    CSR_PMPADDR41        = 12'h3D9,
+    CSR_PMPADDR42        = 12'h3DA,
+    CSR_PMPADDR43        = 12'h3DB,
+    CSR_PMPADDR44        = 12'h3DC,
+    CSR_PMPADDR45        = 12'h3DD,
+    CSR_PMPADDR46        = 12'h3DE,
+    CSR_PMPADDR47        = 12'h3DF,
+    CSR_PMPADDR48        = 12'h3E0,
+    CSR_PMPADDR49        = 12'h3E1,
+    CSR_PMPADDR50        = 12'h3E2,
+    CSR_PMPADDR51        = 12'h3E3,
+    CSR_PMPADDR52        = 12'h3E4,
+    CSR_PMPADDR53        = 12'h3E5,
+    CSR_PMPADDR54        = 12'h3E6,
+    CSR_PMPADDR55        = 12'h3E7,
+    CSR_PMPADDR56        = 12'h3E8,
+    CSR_PMPADDR57        = 12'h3E9,
+    CSR_PMPADDR58        = 12'h3EA,
+    CSR_PMPADDR59        = 12'h3EB,
+    CSR_PMPADDR60        = 12'h3EC,
+    CSR_PMPADDR61        = 12'h3ED,
+    CSR_PMPADDR62        = 12'h3EE,
+    CSR_PMPADDR63        = 12'h3EF,
     CSR_MVENDORID        = 12'hF11,
     CSR_MARCHID          = 12'hF12,
     CSR_MIMPID           = 12'hF13,
@@ -491,7 +602,7 @@ package riscv;
     CSR_MHPM_COUNTER_28  = 12'hB1C,  // reserved
     CSR_MHPM_COUNTER_29  = 12'hB1D,  // reserved
     CSR_MHPM_COUNTER_30  = 12'hB1E,  // reserved
-    CSR_MHPM_COUNTER_31  = 12'hB1F,  // reserved        
+    CSR_MHPM_COUNTER_31  = 12'hB1F,  // reserved
     CSR_MHPM_COUNTER_3H  = 12'hB83,
     CSR_MHPM_COUNTER_4H  = 12'hB84,
     CSR_MHPM_COUNTER_5H  = 12'hB85,
@@ -537,28 +648,28 @@ package riscv;
     CSR_DPC              = 12'h7b1,
     CSR_DSCRATCH0        = 12'h7b2,  // optional
     CSR_DSCRATCH1        = 12'h7b3,  // optional
-    // Counters and Timers (User Mode - R/O Shadows)
+    // Counters and Timers from Zicntr extension (User Mode - R/O Shadows)
     CSR_CYCLE            = 12'hC00,
     CSR_CYCLEH           = 12'hC80,
     CSR_TIME             = 12'hC01,
     CSR_TIMEH            = 12'hC81,
     CSR_INSTRET          = 12'hC02,
     CSR_INSTRETH         = 12'hC82,
-    // Performance counters (User Mode - R/O Shadows)
+    // Performance counters from Zihpm extension (User Mode - R/O Shadows)
     CSR_HPM_COUNTER_3    = 12'hC03,
     CSR_HPM_COUNTER_4    = 12'hC04,
     CSR_HPM_COUNTER_5    = 12'hC05,
     CSR_HPM_COUNTER_6    = 12'hC06,
     CSR_HPM_COUNTER_7    = 12'hC07,
     CSR_HPM_COUNTER_8    = 12'hC08,
-    CSR_HPM_COUNTER_9    = 12'hC09,  // reserved  
-    CSR_HPM_COUNTER_10   = 12'hC0A,  // reserved  
-    CSR_HPM_COUNTER_11   = 12'hC0B,  // reserved  
-    CSR_HPM_COUNTER_12   = 12'hC0C,  // reserved  
-    CSR_HPM_COUNTER_13   = 12'hC0D,  // reserved  
-    CSR_HPM_COUNTER_14   = 12'hC0E,  // reserved  
-    CSR_HPM_COUNTER_15   = 12'hC0F,  // reserved  
-    CSR_HPM_COUNTER_16   = 12'hC10,  // reserved  
+    CSR_HPM_COUNTER_9    = 12'hC09,  // reserved
+    CSR_HPM_COUNTER_10   = 12'hC0A,  // reserved
+    CSR_HPM_COUNTER_11   = 12'hC0B,  // reserved
+    CSR_HPM_COUNTER_12   = 12'hC0C,  // reserved
+    CSR_HPM_COUNTER_13   = 12'hC0D,  // reserved
+    CSR_HPM_COUNTER_14   = 12'hC0E,  // reserved
+    CSR_HPM_COUNTER_15   = 12'hC0F,  // reserved
+    CSR_HPM_COUNTER_16   = 12'hC10,  // reserved
     CSR_HPM_COUNTER_17   = 12'hC11,  // reserved
     CSR_HPM_COUNTER_18   = 12'hC12,  // reserved
     CSR_HPM_COUNTER_19   = 12'hC13,  // reserved
@@ -580,14 +691,14 @@ package riscv;
     CSR_HPM_COUNTER_6H   = 12'hC86,
     CSR_HPM_COUNTER_7H   = 12'hC87,
     CSR_HPM_COUNTER_8H   = 12'hC88,
-    CSR_HPM_COUNTER_9H   = 12'hC89,  // reserved  
-    CSR_HPM_COUNTER_10H  = 12'hC8A,  // reserved  
-    CSR_HPM_COUNTER_11H  = 12'hC8B,  // reserved  
-    CSR_HPM_COUNTER_12H  = 12'hC8C,  // reserved  
-    CSR_HPM_COUNTER_13H  = 12'hC8D,  // reserved  
-    CSR_HPM_COUNTER_14H  = 12'hC8E,  // reserved  
-    CSR_HPM_COUNTER_15H  = 12'hC8F,  // reserved  
-    CSR_HPM_COUNTER_16H  = 12'hC90,  // reserved  
+    CSR_HPM_COUNTER_9H   = 12'hC89,  // reserved
+    CSR_HPM_COUNTER_10H  = 12'hC8A,  // reserved
+    CSR_HPM_COUNTER_11H  = 12'hC8B,  // reserved
+    CSR_HPM_COUNTER_12H  = 12'hC8C,  // reserved
+    CSR_HPM_COUNTER_13H  = 12'hC8D,  // reserved
+    CSR_HPM_COUNTER_14H  = 12'hC8E,  // reserved
+    CSR_HPM_COUNTER_15H  = 12'hC8F,  // reserved
+    CSR_HPM_COUNTER_16H  = 12'hC90,  // reserved
     CSR_HPM_COUNTER_17H  = 12'hC91,  // reserved
     CSR_HPM_COUNTER_18H  = 12'hC92,  // reserved
     CSR_HPM_COUNTER_19H  = 12'hC93,  // reserved
@@ -615,7 +726,22 @@ package riscv;
   localparam logic [63:0] SSTATUS_MXR = 'h00080000;
   localparam logic [63:0] SSTATUS_UPIE = 'h00000010;
   localparam logic [63:0] SSTATUS_UXL = 64'h0000000300000000;
-  localparam logic [63:0] SSTATUS_SD = {IS_XLEN64, 31'h00000000, ~IS_XLEN64, 31'h00000000};
+  // CSR Bit Implementation Masks
+
+  function automatic logic [63:0] sstatus_sd(logic IS_XLEN64);
+    return {IS_XLEN64, 31'h00000000, ~IS_XLEN64, 31'h00000000};
+  endfunction
+
+  localparam logic [63:0] HSTATUS_VSBE = 'h00000020;
+  localparam logic [63:0] HSTATUS_GVA = 'h00000040;
+  localparam logic [63:0] HSTATUS_SPV = 'h00000080;
+  localparam logic [63:0] HSTATUS_SPVP = 'h00000100;
+  localparam logic [63:0] HSTATUS_HU = 'h00000200;
+  localparam logic [63:0] HSTATUS_VGEIN = 'h0003F000;
+  localparam logic [63:0] HSTATUS_VTVM = 'h00100000;
+  localparam logic [63:0] HSTATUS_VTW = 'h00200000;
+  localparam logic [63:0] HSTATUS_VTSR = 'h00400000;
+  localparam logic [63:0] HSTATUS_VSXL = 64'h0000000300000000;
 
   localparam logic [63:0] MSTATUS_UIE = 'h00000001;
   localparam logic [63:0] MSTATUS_SIE = 'h00000002;
@@ -636,9 +762,24 @@ package riscv;
   localparam logic [63:0] MSTATUS_TVM = 'h00100000;
   localparam logic [63:0] MSTATUS_TW = 'h00200000;
   localparam logic [63:0] MSTATUS_TSR = 'h00400000;
-  localparam logic [63:0] MSTATUS_UXL = {30'h0000000, IS_XLEN64, IS_XLEN64, 32'h00000000};
-  localparam logic [63:0] MSTATUS_SXL = {28'h0000000, IS_XLEN64, IS_XLEN64, 34'h00000000};
-  localparam logic [63:0] MSTATUS_SD = {IS_XLEN64, 31'h00000000, ~IS_XLEN64, 31'h00000000};
+  function automatic logic [63:0] mstatus_uxl(logic IS_XLEN64);
+    return {30'h0000000, IS_XLEN64, IS_XLEN64, 32'h00000000};
+  endfunction
+  function automatic logic [63:0] mstatus_sxl(logic IS_XLEN64);
+    return {28'h0000000, IS_XLEN64, IS_XLEN64, 34'h00000000};
+  endfunction
+  function automatic logic [63:0] mstatus_sd(logic IS_XLEN64);
+    return {IS_XLEN64, 31'h00000000, ~IS_XLEN64, 31'h00000000};
+  endfunction
+
+  localparam logic [63:0] MENVCFG_FIOM = 'h00000001;
+  localparam logic [63:0] MENVCFG_CBIE = 'h00000030;
+  localparam logic [63:0] MENVCFG_CBFE = 'h00000040;
+  localparam logic [63:0] MENVCFG_CBZE = 'h00000080;
+  localparam logic [63:0] MENVCFG_PBMTE = 64'h4000000000000000;
+  localparam logic [63:0] MENVCFG_STCE = 64'h8000000000000000;
+
+
 
   typedef enum logic [2:0] {
     CSRRW  = 3'h1,
@@ -704,7 +845,9 @@ package riscv;
   // -----
   typedef struct packed {
     logic [31:28] xdebugver;
-    logic [27:16] zero2;
+    logic [27:18] zero2;
+    logic         ebreakvs;
+    logic         ebreakvu;
     logic         ebreakm;
     logic         zero1;
     logic         ebreaks;
@@ -713,7 +856,7 @@ package riscv;
     logic         stopcount;
     logic         stoptime;
     logic [8:6]   cause;
-    logic         zero0;
+    logic         v;
     logic         mprven;
     logic         nmip;
     logic         step;
@@ -805,6 +948,22 @@ package riscv;
 
   function automatic logic [31:0] illegal();
     return 32'h00000000;
+  endfunction
+
+  // This functions converts S-mode CSR addresses into VS-mode CSR addresses
+  // when V=1 (i.e., running in VS-mode).
+  function automatic csr_t convert_vs_access_csr(csr_t csr_addr, logic v);
+    csr_t ret;
+    ret = csr_addr;
+    unique case (csr_addr.address) inside
+      [CSR_SSTATUS : CSR_STVEC], [CSR_SSCRATCH : CSR_SATP]: begin
+        if (v) begin
+          ret.csr_decode.priv_lvl = PRIV_LVL_HS;
+        end
+        return ret;
+      end
+      default: return ret;
+    endcase
   endfunction
 
 

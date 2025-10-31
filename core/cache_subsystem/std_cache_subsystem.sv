@@ -20,6 +20,14 @@ module std_cache_subsystem
   import std_cache_pkg::*;
 #(
     parameter config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty,
+    parameter type icache_areq_t = logic,
+    parameter type icache_arsp_t = logic,
+    parameter type icache_dreq_t = logic,
+    parameter type icache_drsp_t = logic,
+    parameter type icache_req_t = logic,
+    parameter type icache_rtrn_t = logic,
+    parameter type dcache_req_i_t = logic,
+    parameter type dcache_req_o_t = logic,
     parameter int unsigned NumPorts = 4,
     parameter type axi_ar_chan_t = logic,
     parameter type axi_aw_chan_t = logic,
@@ -68,7 +76,13 @@ module std_cache_subsystem
   axi_rsp_t axi_resp_data;
 
   cva6_icache_axi_wrapper #(
-      .CVA6Cfg  (CVA6Cfg),
+      .CVA6Cfg(CVA6Cfg),
+      .icache_areq_t(icache_areq_t),
+      .icache_arsp_t(icache_arsp_t),
+      .icache_dreq_t(icache_dreq_t),
+      .icache_drsp_t(icache_drsp_t),
+      .icache_req_t(icache_req_t),
+      .icache_rtrn_t(icache_rtrn_t),
       .axi_req_t(axi_req_t),
       .axi_rsp_t(axi_rsp_t)
   ) i_cva6_icache_axi_wrapper (
@@ -92,8 +106,10 @@ module std_cache_subsystem
   // Port 2: Accelerator
   // Port 3: Store Unit
   std_nbdcache #(
-      .CVA6Cfg  (CVA6Cfg),
-      .NumPorts (NumPorts),
+      .CVA6Cfg(CVA6Cfg),
+      .dcache_req_i_t(dcache_req_i_t),
+      .dcache_req_o_t(dcache_req_o_t),
+      .NumPorts(NumPorts),
       .axi_req_t(axi_req_t),
       .axi_rsp_t(axi_rsp_t)
   ) i_nbdcache (
@@ -119,6 +135,8 @@ module std_cache_subsystem
   logic [1:0] w_select, w_select_fifo, w_select_arbiter;
   logic [1:0] w_fifo_usage;
   logic w_fifo_empty, w_fifo_full;
+  logic w_fifo_push, w_fifo_pop;
+  logic aw_lock_q, aw_lock_d;
 
 
   // AR Channel
@@ -163,27 +181,37 @@ module std_cache_subsystem
   end
 
   // W Channel
-  fifo_v3 #(
+  cva6_fifo_v3 #(
       .DATA_WIDTH  (2),
       // we can have a maximum of 4 oustanding transactions as each port is blocking
       .DEPTH       (4),
-      .FALL_THROUGH(1'b1)
+      .FALL_THROUGH(1'b1),
+      .FPGA_EN     (CVA6Cfg.FpgaEn)
   ) i_fifo_w_channel (
       .clk_i     (clk_i),
       .rst_ni    (rst_ni),
       .flush_i   (1'b0),
       .testmode_i(1'b0),
       .full_o    (w_fifo_full),
-      .empty_o   (),                                                          // leave open
+      .empty_o   (),               // leave open
       .usage_o   (w_fifo_usage),
       .data_i    (w_select),
       // a new transaction was requested and granted
-      .push_i    (axi_req_o.aw_valid & axi_resp_i.aw_ready),
+      .push_i    (w_fifo_push),
       // write ID to select the output MUX
       .data_o    (w_select_fifo),
       // transaction has finished
-      .pop_i     (axi_req_o.w_valid & axi_resp_i.w_ready & axi_req_o.w.last)
+      .pop_i     (w_fifo_pop)
   );
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin : aw_lock_reg
+    if (~rst_ni) aw_lock_q <= 1'b0;
+    else aw_lock_q <= aw_lock_d;
+  end
+
+  assign w_fifo_push = ~aw_lock_q & axi_req_o.aw_valid;
+  assign w_fifo_pop = axi_req_o.w_valid & axi_resp_i.w_ready & axi_req_o.w.last;
+  assign aw_lock_d = ~axi_resp_i.aw_ready & (axi_req_o.aw_valid | aw_lock_q);
 
   // In fall-through mode, the empty_o will be low when push_i is high (on zero usage).
   // We do not want this here. Also, usage_o is missing the MSB, so on full fifo, usage_o is zero.

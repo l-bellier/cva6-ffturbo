@@ -22,7 +22,11 @@ module cache_ctrl
   import ariane_pkg::*;
   import std_cache_pkg::*;
 #(
-    parameter config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty
+    parameter config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty,
+    parameter type cache_line_t = logic,
+    parameter type cl_be_t = logic,
+    parameter type dcache_req_i_t = logic,
+    parameter type dcache_req_o_t = logic
 ) (
     input logic clk_i,  // Clock
     input logic rst_ni,  // Asynchronous reset active low
@@ -33,15 +37,15 @@ module cache_ctrl
     input dcache_req_i_t req_port_i,
     output dcache_req_o_t req_port_o,
     // SRAM interface
-    output logic [DCACHE_SET_ASSOC-1:0] req_o,  // req is valid
-    output logic [DCACHE_INDEX_WIDTH-1:0] addr_o,  // address into cache array
+    output logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] req_o,  // req is valid
+    output logic [CVA6Cfg.DCACHE_INDEX_WIDTH-1:0] addr_o,  // address into cache array
     input logic gnt_i,
     output cache_line_t data_o,
     output cl_be_t be_o,
-    output logic [DCACHE_TAG_WIDTH-1:0] tag_o,  //valid one cycle later
-    input cache_line_t [DCACHE_SET_ASSOC-1:0] data_i,
+    output logic [CVA6Cfg.DCACHE_TAG_WIDTH-1:0] tag_o,  //valid one cycle later
+    input cache_line_t [CVA6Cfg.DCACHE_SET_ASSOC-1:0] data_i,
     output logic we_o,
-    input logic [DCACHE_SET_ASSOC-1:0] hit_way_i,
+    input logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] hit_way_i,
     // Miss handling
     output miss_req_t miss_req_o,
     // return
@@ -75,29 +79,30 @@ module cache_ctrl
       state_d, state_q;
 
   typedef struct packed {
-    logic [DCACHE_INDEX_WIDTH-1:0] index;
-    logic [DCACHE_TAG_WIDTH-1:0]   tag;
-    logic [DCACHE_TID_WIDTH-1:0]   id;
-    logic [7:0]                    be;
-    logic [1:0]                    size;
-    logic                          we;
-    logic [63:0]                   wdata;
-    logic                          bypass;
-    logic                          killed;
+    logic [CVA6Cfg.DCACHE_INDEX_WIDTH-1:0] index;
+    logic [CVA6Cfg.DCACHE_TAG_WIDTH-1:0]   tag;
+    logic [CVA6Cfg.DcacheIdWidth-1:0]      id;
+    logic [(CVA6Cfg.XLEN/8)-1:0]           be;
+    logic [1:0]                            size;
+    logic                                  we;
+    logic [CVA6Cfg.XLEN-1:0]               wdata;
+    logic                                  bypass;
+    logic                                  killed;
   } mem_req_t;
 
-  logic [DCACHE_SET_ASSOC-1:0] hit_way_d, hit_way_q;
+  logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] hit_way_d, hit_way_q;
 
   mem_req_t mem_req_d, mem_req_q;
 
   assign busy_o = (state_q != IDLE);
   assign tag_o  = mem_req_d.tag;
 
-  logic [DCACHE_LINE_WIDTH-1:0] cl_i;
+  logic [CVA6Cfg.DCACHE_LINE_WIDTH-1:0] cl_i;
 
   always_comb begin : way_select
     cl_i = '0;
-    for (int unsigned i = 0; i < DCACHE_SET_ASSOC; i++) if (hit_way_i[i]) cl_i = data_i[i].data;
+    for (int unsigned i = 0; i < CVA6Cfg.DCACHE_SET_ASSOC; i++)
+    if (hit_way_i[i]) cl_i = data_i[i].data;
 
     // cl_i = data_i[one_hot_to_bin(hit_way_i)].data;
   end
@@ -106,10 +111,14 @@ module cache_ctrl
   // Cache FSM
   // --------------
   always_comb begin : cache_ctrl_fsm
-    automatic logic [$clog2(DCACHE_LINE_WIDTH)-1:0] cl_offset;
+    automatic logic [$clog2(CVA6Cfg.DCACHE_LINE_WIDTH)-1:0] cl_offset;
+    automatic logic [$clog2(CVA6Cfg.AxiDataWidth)-1:0] axi_offset;
     // incoming cache-line -> this is needed as synthesis is not supporting +: indexing in a multi-dimensional array
-    // cache-line offset -> multiple of 64
-    cl_offset = mem_req_q.index[DCACHE_BYTE_OFFSET-1:3] << 6;  // shift by 6 to the left
+    // cache-line offset -> multiple of XLEN
+    cl_offset = mem_req_q.index[CVA6Cfg.DCACHE_OFFSET_WIDTH-1:$clog2(CVA6Cfg.XLEN/8)] <<
+        $clog2(CVA6Cfg.XLEN);  // shift by log2(XLEN) to the left
+    // XLEN offset within AXI request
+    axi_offset = (mem_req_q.index >> $clog2(CVA6Cfg.XLEN / 8)) << $clog2(CVA6Cfg.XLEN);
     // default assignments
     state_d = state_q;
     mem_req_d = mem_req_q;
@@ -206,7 +215,7 @@ module cache_ctrl
             end
 
             // this is timing critical
-            req_port_o.data_rdata = cl_i[cl_offset+:64];
+            req_port_o.data_rdata = cl_i[cl_offset+:CVA6Cfg.XLEN];
 
             // report data for a read
             if (!mem_req_q.we) begin
@@ -252,7 +261,7 @@ module cache_ctrl
           // Check for cache-ability
           // -------------------------
           if (!config_pkg::is_inside_cacheable_regions(
-                  CVA6Cfg, {{{64 - riscv::PLEN} {1'b0}}, tag_o, {DCACHE_INDEX_WIDTH{1'b0}}}
+                  CVA6Cfg, {{{64 - CVA6Cfg.PLEN} {1'b0}}, tag_o, {CVA6Cfg.DCACHE_INDEX_WIDTH{1'b0}}}
               )) begin
             mem_req_d.bypass = 1'b1;
             state_d = WAIT_REFILL_GNT;
@@ -298,18 +307,19 @@ module cache_ctrl
         // two memory look-ups on a single-ported SRAM and therefore is non-atomic
         if (!mshr_index_matches_i) begin
           // store data, write dirty bit
-          req_o                      = hit_way_q;
-          addr_o                     = mem_req_q.index;
-          we_o                       = 1'b1;
+          req_o                                   = hit_way_q;
+          addr_o                                  = mem_req_q.index;
+          we_o                                    = 1'b1;
 
-          be_o.vldrty                = hit_way_q;
+          be_o.vldrty                             = hit_way_q;
 
           // set the correct byte enable
-          be_o.data[cl_offset>>3+:8] = mem_req_q.be;
-          data_o.data[cl_offset+:64] = mem_req_q.wdata;
+          be_o.data[cl_offset>>3+:CVA6Cfg.XLEN/8] = mem_req_q.be;
+          data_o.data[cl_offset+:CVA6Cfg.XLEN]    = mem_req_q.wdata;
+          data_o.tag                              = mem_req_d.tag;
           // ~> change the state
-          data_o.dirty               = 1'b1;
-          data_o.valid               = 1'b1;
+          data_o.dirty                            = 1'b1;
+          data_o.valid                            = 1'b1;
 
           // got a grant ~> this is finished now
           if (gnt_i) begin
@@ -352,10 +362,10 @@ module cache_ctrl
         miss_req_o.valid = 1'b1;
         miss_req_o.bypass = mem_req_q.bypass;
         miss_req_o.addr = {mem_req_q.tag, mem_req_q.index};
-        miss_req_o.be = mem_req_q.be;
+        miss_req_o.be[axi_offset>>3+:CVA6Cfg.XLEN/8] = mem_req_q.be;
         miss_req_o.size = mem_req_q.size;
         miss_req_o.we = mem_req_q.we;
-        miss_req_o.wdata = mem_req_q.wdata;
+        miss_req_o.wdata[axi_offset+:CVA6Cfg.XLEN] = mem_req_q.wdata;
 
         // got a grant so go to valid
         if (bypass_gnt_i) begin
@@ -394,9 +404,9 @@ module cache_ctrl
 
         if (critical_word_valid_i) begin
           req_port_o.data_rvalid = ~mem_req_q.killed;
-          req_port_o.data_rdata  = critical_word_i;
+          req_port_o.data_rdata  = critical_word_i[axi_offset+:CVA6Cfg.XLEN];
           // we can make another request
-          if (req_port_i.data_req) begin
+          if (req_port_i.data_req && !flush_i) begin
             // save index, be and we
             mem_req_d.index = req_port_i.address_index;
             mem_req_d.id    = req_port_i.data_id;
@@ -423,16 +433,19 @@ module cache_ctrl
       WAIT_REFILL_VALID: begin
         // got a valid answer
         if (bypass_valid_i) begin
-          req_port_o.data_rdata = bypass_data_i;
+          req_port_o.data_rdata = bypass_data_i[axi_offset+:CVA6Cfg.XLEN];
           req_port_o.data_rvalid = ~mem_req_q.killed;
           state_d = IDLE;
         end
       end
+
+      default: ;
+
     endcase
 
     if (req_port_i.kill_req) begin
       req_port_o.data_rvalid = 1'b1;
-      if (!(state_q inside {WAIT_REFILL_GNT, WAIT_CRITICAL_WORD})) begin
+      if (!(state_q inside {WAIT_REFILL_GNT, WAIT_REFILL_VALID, WAIT_CRITICAL_WORD})) begin
         state_d = IDLE;
       end
     end
@@ -456,7 +469,7 @@ module cache_ctrl
   //pragma translate_off
 `ifndef VERILATOR
   initial begin
-    assert (DCACHE_LINE_WIDTH == 128)
+    assert (CVA6Cfg.DCACHE_LINE_WIDTH == 128)
     else
       $error(
           "Cacheline width has to be 128 for the moment. But only small changes required in data select logic"

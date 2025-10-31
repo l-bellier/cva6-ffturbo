@@ -29,31 +29,18 @@
 package ariane_pkg;
 
   // TODO: Slowly move those parameters to the new system.
-  localparam NR_SB_ENTRIES = cva6_config_pkg::CVA6ConfigNrScoreboardEntries; // number of scoreboard entries
-  localparam TRANS_ID_BITS = $clog2(
-      NR_SB_ENTRIES
-  );  // depending on the number of scoreboard entries we need that many bits
-      // to uniquely identify the entry in the scoreboard
-  localparam ASID_WIDTH = (riscv::XLEN == 64) ? 16 : 1;
   localparam BITS_SATURATION_COUNTER = 2;
-
-  localparam ISSUE_WIDTH = 1;
 
   // depth of store-buffers, this needs to be a power of two
   localparam logic [2:0] DEPTH_SPEC = 'd4;
 
-  localparam int unsigned DCACHE_TYPE = int'(cva6_config_pkg::CVA6ConfigDcacheType);
-  // if DCACHE_TYPE = cva6_config_pkg::WT
+  // if CVA6Cfg.DCacheType = cva6_config_pkg::WT
   // we can use a small commit queue since we have a write buffer in the dcache
   // we could in principle do without the commit queue in this case, but the timing degrades if we do that due
   // to longer paths into the commit stage
-  // if DCACHE_TYPE = cva6_config_pkg::WB
+  // if CVA6Cfg.DCacheType = cva6_config_pkg::WB
   // allocate more space for the commit buffer to be on the save side, this needs to be a power of two
   localparam logic [2:0] DEPTH_COMMIT = 'd4;
-
-  localparam bit FPGA_EN = cva6_config_pkg::CVA6ConfigFPGAEn;  // Is FPGA optimization of CV32A6
-
-  localparam bit RVC = cva6_config_pkg::CVA6ConfigCExtEn;  // Is C extension configuration
 
   // Transprecision float unit
   localparam int unsigned LAT_COMP_FP32 = 'd2;
@@ -65,8 +52,8 @@ package ariane_pkg;
   localparam int unsigned LAT_NONCOMP = 'd1;
   localparam int unsigned LAT_CONV = 'd2;
 
-  localparam riscv::xlen_t OPENHWGROUP_MVENDORID = {{riscv::XLEN - 32{1'b0}}, 32'h0602};
-  localparam riscv::xlen_t ARIANE_MARCHID = {{riscv::XLEN - 32{1'b0}}, 32'd3};
+  localparam logic [31:0] OPENHWGROUP_MVENDORID = 32'h0602;
+  localparam logic [31:0] ARIANE_MARCHID = 32'd3;
 
   // 32 registers
   localparam REG_ADDR_SIZE = 5;
@@ -107,37 +94,35 @@ package ariane_pkg;
   // enables a commit log which matches spikes commit log format for easier trace comparison
   localparam bit ENABLE_SPIKE_COMMIT_LOG = 1'b1;
 
-  // ------------- Dangerouse -------------
+  // ------------- Dangerous -------------
   // if set to zero a flush will not invalidate the cache-lines, in a single core environment
   // where coherence is not necessary this can improve performance. This needs to be switched on
   // when more than one core is in a system
   localparam logic INVALIDATE_ON_FLUSH = 1'b1;
+
 `ifdef SPIKE_TANDEM
-  // enable performance cycle counter, if set to zero mcycle will be incremented
-  // with instret (non RISC-V conformal)
-  localparam bit ENABLE_CYCLE_COUNT = 1'b0;
-  // mark WIF as nop
-  localparam bit ENABLE_WFI = 1'b0;
-  // Spike zeros tval on all exception except memory faults
+  // Spike still places 0 in TVAL for ENV_CALL_* exceptions.
+  // This may eventually go away when Spike starts to handle TVAL for *all* exceptions.
   localparam bit ZERO_TVAL = 1'b1;
 `else
-  localparam bit ENABLE_CYCLE_COUNT = 1'b1;
-  localparam bit ENABLE_WFI = 1'b1;
   localparam bit ZERO_TVAL = 1'b0;
 `endif
+
   // read mask for SSTATUS over MMSTATUS
-  localparam logic [63:0] SMODE_STATUS_READ_MASK = riscv::SSTATUS_UIE
-                                                   | riscv::SSTATUS_SIE
-                                                   | riscv::SSTATUS_SPIE
-                                                   | riscv::SSTATUS_SPP
-                                                   | riscv::SSTATUS_FS
-                                                   | riscv::SSTATUS_XS
-                                                   | riscv::SSTATUS_SUM
-                                                   | riscv::SSTATUS_MXR
-                                                   | riscv::SSTATUS_UPIE
-                                                   | riscv::SSTATUS_SPIE
-                                                   | riscv::SSTATUS_UXL
-                                                   | riscv::SSTATUS_SD;
+  function automatic logic [63:0] smode_status_read_mask(config_pkg::cva6_cfg_t Cfg);
+    return riscv::SSTATUS_UIE
+    | riscv::SSTATUS_SIE
+    | riscv::SSTATUS_SPIE
+    | riscv::SSTATUS_SPP
+    | riscv::SSTATUS_FS
+    | riscv::SSTATUS_XS
+    | riscv::SSTATUS_SUM
+    | riscv::SSTATUS_MXR
+    | riscv::SSTATUS_UPIE
+    | riscv::SSTATUS_SPIE
+    | riscv::SSTATUS_UXL
+    | riscv::sstatus_sd(Cfg.IS_XLEN64);
+  endfunction
 
   localparam logic [63:0] SMODE_STATUS_WRITE_MASK = riscv::SSTATUS_SIE
                                                     | riscv::SSTATUS_SPIE
@@ -145,16 +130,29 @@ package ariane_pkg;
                                                     | riscv::SSTATUS_FS
                                                     | riscv::SSTATUS_SUM
                                                     | riscv::SSTATUS_MXR;
+
+  localparam logic [63:0] HSTATUS_WRITE_MASK      = riscv::HSTATUS_VSBE
+                                                    | riscv::HSTATUS_GVA
+                                                    | riscv::HSTATUS_SPV
+                                                    | riscv::HSTATUS_SPVP
+                                                    | riscv::HSTATUS_HU
+                                                    | riscv::HSTATUS_VTVM
+                                                    | riscv::HSTATUS_VTW
+                                                    | riscv::HSTATUS_VTSR;
+
+  // hypervisor delegable interrupts
+  function automatic logic [31:0] hs_deleg_interrupts(config_pkg::cva6_cfg_t Cfg);
+    return riscv::MIP_VSSIP | riscv::MIP_VSTIP | riscv::MIP_VSEIP;
+  endfunction
+
+  // virtual supervisor delegable interrupts
+  function automatic logic [31:0] vs_deleg_interrupts(config_pkg::cva6_cfg_t Cfg);
+    return riscv::MIP_VSSIP | riscv::MIP_VSTIP | riscv::MIP_VSEIP;
+  endfunction
+
   // ---------------
   // AXI
   // ---------------
-
-  localparam FETCH_USER_WIDTH = cva6_config_pkg::CVA6ConfigFetchUserWidth;
-  localparam DATA_USER_WIDTH = cva6_config_pkg::CVA6ConfigDataUserWidth;
-  localparam AXI_USER_EN = cva6_config_pkg::CVA6ConfigDataUserEn | cva6_config_pkg::CVA6ConfigFetchUserEn;
-  localparam AXI_USER_WIDTH = cva6_config_pkg::CVA6ConfigDataUserWidth;
-  localparam DATA_USER_EN = cva6_config_pkg::CVA6ConfigDataUserEn;
-  localparam FETCH_USER_EN = cva6_config_pkg::CVA6ConfigFetchUserEn;
 
   typedef enum logic {
     SINGLE_REQ,
@@ -167,26 +165,7 @@ package ariane_pkg;
 
   // leave as is (fails with >8 entries and wider fetch width)
   localparam int unsigned FETCH_FIFO_DEPTH = 4;
-  localparam int unsigned FETCH_WIDTH = 32;
-  // maximum instructions we can fetch on one request (we support compressed instructions)
-  localparam int unsigned INSTR_PER_FETCH = RVC == 1'b1 ? (FETCH_WIDTH / 16) : 1;
-  localparam int unsigned LOG2_INSTR_PER_FETCH = RVC == 1'b1 ? $clog2(
-      ariane_pkg::INSTR_PER_FETCH
-  ) : 1;
-
-  // ---------------
-  // Enable BITMANIP
-  // ---------------
-  localparam bit BITMANIP = cva6_config_pkg::CVA6ConfigBExtEn;
-
-  // Only use struct when signals have same direction
-  // exception
-  typedef struct packed {
-    riscv::xlen_t cause;  // cause of exception
-    riscv::xlen_t       tval;  // additional information of causing exception (e.g.: instruction causing it),
-    // address of LD/ST fault
-    logic valid;
-  } exception_t;
+  localparam int unsigned FETCH_ADDR_FIFO_DEPTH = 2;
 
   typedef enum logic [2:0] {
     NoCF,    // No control flow prediction
@@ -195,49 +174,6 @@ package ariane_pkg;
     JumpR,   // Jump to address from registers
     Return   // Return Address Prediction
   } cf_t;
-
-  // branch-predict
-  // this is the struct we get back from ex stage and we will use it to update
-  // all the necessary data structures
-  // bp_resolve_t
-  typedef struct packed {
-    logic                   valid;           // prediction with all its values is valid
-    logic [riscv::VLEN-1:0] pc;              // PC of predict or mis-predict
-    logic [riscv::VLEN-1:0] target_address;  // target address at which to jump, or not
-    logic                   is_mispredict;   // set if this was a mis-predict
-    logic                   is_taken;        // branch is taken
-    cf_t                    cf_type;         // Type of control flow change
-  } bp_resolve_t;
-
-  // branchpredict scoreboard entry
-  // this is the struct which we will inject into the pipeline to guide the various
-  // units towards the correct branch decision and resolve
-  typedef struct packed {
-    cf_t                    cf;               // type of control flow prediction
-    logic [riscv::VLEN-1:0] predict_address;  // target address at which to jump, or not
-  } branchpredict_sbe_t;
-
-  typedef struct packed {
-    logic                   valid;
-    logic [riscv::VLEN-1:0] pc;              // update at PC
-    logic [riscv::VLEN-1:0] target_address;
-  } btb_update_t;
-
-  typedef struct packed {
-    logic                   valid;
-    logic [riscv::VLEN-1:0] target_address;
-  } btb_prediction_t;
-
-  typedef struct packed {
-    logic                   valid;
-    logic [riscv::VLEN-1:0] ra;
-  } ras_t;
-
-  typedef struct packed {
-    logic                   valid;
-    logic [riscv::VLEN-1:0] pc;     // update at PC
-    logic                   taken;
-  } bht_update_t;
 
   typedef struct packed {
     logic valid;
@@ -263,20 +199,18 @@ package ariane_pkg;
     ACCEL       // 10
   } fu_t;
 
+  // Index of writeback ports
+  localparam FLU_WB = 0;
+  localparam STORE_WB = 1;
+  localparam LOAD_WB = 2;
+  localparam FPU_WB = 3;
+  localparam ACC_WB = 4;
+  localparam X_WB = 4;
+
   localparam EXC_OFF_RST = 8'h80;
 
   localparam SupervisorIrq = 1;
   localparam MachineIrq = 0;
-
-  // All information needed to determine whether we need to associate an interrupt
-  // with the corresponding instruction or not.
-  typedef struct packed {
-    riscv::xlen_t mie;
-    riscv::xlen_t mip;
-    riscv::xlen_t mideleg;
-    logic         sie;
-    logic         global_enable;
-  } irq_ctrl_t;
 
   // ---------------
   // Cache config
@@ -325,36 +259,10 @@ package ariane_pkg;
   localparam int unsigned DCACHE_INDEX_WIDTH = $clog2(`CONFIG_L1D_SIZE / DCACHE_SET_ASSOC);
   localparam int unsigned DCACHE_TAG_WIDTH = riscv::PLEN - DCACHE_INDEX_WIDTH;
   localparam int unsigned DCACHE_USER_LINE_WIDTH = (AXI_USER_WIDTH == 1) ? 4 : 128;  // in bit
-  localparam int unsigned DCACHE_USER_WIDTH = DATA_USER_WIDTH;
+  localparam int unsigned DCACHE_USER_WIDTH = cva6_config_pkg::CVA6ConfigDataUserWidth;
 
   localparam int unsigned MEM_TID_WIDTH = `L15_THREADID_WIDTH;
-`else
-  // I$
-  localparam int unsigned CONFIG_L1I_SIZE = cva6_config_pkg::CVA6ConfigIcacheByteSize;  // in byte
-  localparam int unsigned ICACHE_SET_ASSOC   = cva6_config_pkg::CVA6ConfigIcacheSetAssoc; // number of ways
-  localparam int unsigned ICACHE_INDEX_WIDTH = $clog2(
-      CONFIG_L1I_SIZE / ICACHE_SET_ASSOC
-  );  // in bit, contains also offset width
-  localparam int unsigned ICACHE_TAG_WIDTH = riscv::PLEN - ICACHE_INDEX_WIDTH;  // in bit
-  localparam int unsigned ICACHE_LINE_WIDTH = cva6_config_pkg::CVA6ConfigIcacheLineWidth;  // in bit
-  localparam int unsigned ICACHE_USER_LINE_WIDTH  = (AXI_USER_WIDTH == 1) ? 4 : cva6_config_pkg::CVA6ConfigIcacheLineWidth; // in bit
-  // D$
-  localparam int unsigned CONFIG_L1D_SIZE = cva6_config_pkg::CVA6ConfigDcacheByteSize;  // in byte
-  localparam int unsigned DCACHE_SET_ASSOC   = cva6_config_pkg::CVA6ConfigDcacheSetAssoc; // number of ways
-  localparam int unsigned DCACHE_INDEX_WIDTH = $clog2(
-      CONFIG_L1D_SIZE / DCACHE_SET_ASSOC
-  );  // in bit, contains also offset width
-  localparam int unsigned DCACHE_TAG_WIDTH = riscv::PLEN - DCACHE_INDEX_WIDTH;  // in bit
-  localparam int unsigned DCACHE_LINE_WIDTH = cva6_config_pkg::CVA6ConfigDcacheLineWidth;  // in bit
-  localparam int unsigned DCACHE_USER_LINE_WIDTH  = (AXI_USER_WIDTH == 1) ? 4 : cva6_config_pkg::CVA6ConfigDcacheLineWidth; // in bit
-  localparam int unsigned DCACHE_USER_WIDTH = DATA_USER_WIDTH;
-
-  localparam int unsigned MEM_TID_WIDTH = cva6_config_pkg::CVA6ConfigMemTidWidth;
 `endif
-
-  localparam int unsigned DCACHE_TID_WIDTH = cva6_config_pkg::CVA6ConfigDcacheIdWidth;
-
-  localparam int unsigned WT_DCACHE_WBUF_DEPTH = cva6_config_pkg::CVA6ConfigWtDcacheWbufDepth;
 
   // ---------------
   // EX Stage
@@ -398,6 +306,8 @@ package ariane_pkg;
     FENCE,
     FENCE_I,
     SFENCE_VMA,
+    HFENCE_VVMA,
+    HFENCE_GVMA,
     CSR_WRITE,
     CSR_READ,
     CSR_SET,
@@ -414,6 +324,20 @@ package ariane_pkg;
     LB,
     SB,
     LBU,
+    // Hypervisor Virtual-Machine Load and Store Instructions
+    HLV_B,
+    HLV_BU,
+    HLV_H,
+    HLV_HU,
+    HLVX_HU,
+    HLV_W,
+    HLVX_WU,
+    HSV_B,
+    HSV_H,
+    HSV_W,
+    HLV_WU,
+    HLV_D,
+    HSV_D,
     // Atomic Memory Operations
     AMO_LRW,
     AMO_LRD,
@@ -563,17 +487,17 @@ package ariane_pkg;
     ACCEL_OP_STORE,
     // Zicond instruction
     CZERO_EQZ,
-    CZERO_NEZ
+    CZERO_NEZ,
+    // Pack instructions
+    PACK,
+    PACK_H,
+    PACK_W,
+    // Brev8 instruction
+    BREV8,
+    // Zip instructions
+    UNZIP,
+    ZIP
   } fu_op;
-
-  typedef struct packed {
-    fu_t                      fu;
-    fu_op                     operation;
-    riscv::xlen_t             operand_a;
-    riscv::xlen_t             operand_b;
-    riscv::xlen_t             imm;
-    logic [TRANS_ID_BITS-1:0] trans_id;
-  } fu_data_t;
 
   function automatic logic op_is_branch(input fu_op op);
     unique case (op) inside
@@ -659,76 +583,9 @@ package ariane_pkg;
     endcase
   endfunction
 
-  typedef struct packed {
-    logic                       valid;
-    logic [riscv::VLEN-1:0]     vaddr;
-    logic                       overflow;
-    riscv::xlen_t               data;
-    logic [(riscv::XLEN/8)-1:0] be;
-    fu_t                        fu;
-    fu_op                       operation;
-    logic [TRANS_ID_BITS-1:0]   trans_id;
-  } lsu_ctrl_t;
-
-  // ---------------
-  // IF/ID Stage
-  // ---------------
-  // store the decompressed instruction
-  typedef struct packed {
-    logic [riscv::VLEN-1:0] address;  // the address of the instructions from below
-    logic [31:0] instruction;  // instruction word
-    branchpredict_sbe_t     branch_predict; // this field contains branch prediction information regarding the forward branch path
-    exception_t             ex;             // this field contains exceptions which might have happened earlier, e.g.: fetch exceptions
-  } fetch_entry_t;
-
-  // ---------------
-  // ID/EX/WB Stage
-  // ---------------
-
-  localparam RVFI = cva6_config_pkg::CVA6ConfigRvfiTrace;
-
-  typedef struct packed {
-    logic [riscv::VLEN-1:0] pc;  // PC of instruction
-    logic [TRANS_ID_BITS-1:0] trans_id;      // this can potentially be simplified, we could index the scoreboard entry
-                                             // with the transaction id in any case make the width more generic
-    fu_t fu;  // functional unit to use
-    fu_op op;  // operation to perform in each functional unit
-    logic [REG_ADDR_SIZE-1:0] rs1;  // register source address 1
-    logic [REG_ADDR_SIZE-1:0] rs2;  // register source address 2
-    logic [REG_ADDR_SIZE-1:0] rd;  // register destination address
-    riscv::xlen_t result;  // for unfinished instructions this field also holds the immediate,
-                           // for unfinished floating-point that are partly encoded in rs2, this field also holds rs2
-                           // for unfinished floating-point fused operations (FMADD, FMSUB, FNMADD, FNMSUB)
-                           // this field holds the address of the third operand from the floating-point register file
-    logic valid;  // is the result valid
-    logic use_imm;  // should we use the immediate as operand b?
-    logic use_zimm;  // use zimm as operand a
-    logic use_pc;  // set if we need to use the PC as operand a, PC from exception
-    exception_t ex;  // exception has occurred
-    branchpredict_sbe_t bp;  // branch predict scoreboard data structure
-    logic                     is_compressed; // signals a compressed instructions, we need this information at the commit stage if
-                                             // we want jump accordingly e.g.: +4, +2
-    riscv::xlen_t rs1_rdata;  // information needed by RVFI
-    riscv::xlen_t rs2_rdata;  // information needed by RVFI
-    logic [riscv::VLEN-1:0] lsu_addr;  // information needed by RVFI
-    logic [(riscv::XLEN/8)-1:0] lsu_rmask;  // information needed by RVFI
-    logic [(riscv::XLEN/8)-1:0] lsu_wmask;  // information needed by RVFI
-    riscv::xlen_t lsu_wdata;  // information needed by RVFI
-    logic vfp;  // is this a vector floating-point instruction?
-  } scoreboard_entry_t;
-
-  // ---------------
-  // MMU instanciation
-  // ---------------
-  localparam bit MMU_PRESENT = cva6_config_pkg::CVA6ConfigMmuPresent;
-
-  localparam int unsigned INSTR_TLB_ENTRIES = cva6_config_pkg::CVA6ConfigInstrTlbEntries;
-  localparam int unsigned DATA_TLB_ENTRIES = cva6_config_pkg::CVA6ConfigDataTlbEntries;
-
   // -------------------
   // Performance counter
   // -------------------
-  localparam bit PERF_COUNTER_EN = cva6_config_pkg::CVA6ConfigPerfCounterEn;
   localparam int unsigned MHPMCounterNum = 6;
 
   // --------------------
@@ -751,15 +608,6 @@ package ariane_pkg;
     AMO_CAS2 = 4'b1101   // unused, not part of riscv spec, but provided in OpenPiton
   } amo_t;
 
-  typedef struct packed {
-    logic                  valid;    // valid flag
-    logic                  is_2M;    //
-    logic                  is_1G;    //
-    logic [27-1:0]         vpn;      // VPN (39bits) = 27bits + 12bits offset
-    logic [ASID_WIDTH-1:0] asid;
-    riscv::pte_t           content;
-  } tlb_update_t;
-
   // Bits required for representation of physical address space as 4K pages
   // (e.g. 27*4K == 39bit address space).
   localparam PPN4K_WIDTH = 38;
@@ -775,41 +623,9 @@ package ariane_pkg;
   typedef enum logic [1:0] {
     FE_NONE,
     FE_INSTR_ACCESS_FAULT,
-    FE_INSTR_PAGE_FAULT
+    FE_INSTR_PAGE_FAULT,
+    FE_INSTR_GUEST_PAGE_FAULT
   } frontend_exception_t;
-
-  // ----------------------
-  // cache request ports
-  // ----------------------
-  // I$ address translation requests
-  typedef struct packed {
-    logic                   fetch_valid;      // address translation valid
-    logic [riscv::PLEN-1:0] fetch_paddr;      // physical address in
-    exception_t             fetch_exception;  // exception occurred during fetch
-  } icache_areq_t;
-
-  typedef struct packed {
-    logic                   fetch_req;    // address translation request
-    logic [riscv::VLEN-1:0] fetch_vaddr;  // virtual address out
-  } icache_arsp_t;
-
-  // I$ data requests
-  typedef struct packed {
-    logic                   req;      // we request a new word
-    logic                   kill_s1;  // kill the current request
-    logic                   kill_s2;  // kill the last request
-    logic                   spec;     // request is speculative
-    logic [riscv::VLEN-1:0] vaddr;    // 1st cycle: 12 bit index is taken for lookup
-  } icache_dreq_t;
-
-  typedef struct packed {
-    logic                        ready;  // icache is ready
-    logic                        valid;  // signals a valid read
-    logic [FETCH_WIDTH-1:0]      data;   // 2+ cycle out: tag
-    logic [FETCH_USER_WIDTH-1:0] user;   // User bits
-    logic [riscv::VLEN-1:0]      vaddr;  // virtual address out
-    exception_t                  ex;     // we've encountered an exception
-  } icache_drsp_t;
 
   // AMO request going to cache. this request is unconditionally valid as soon
   // as request goes high.
@@ -829,88 +645,18 @@ package ariane_pkg;
     logic [63:0] result;  // sign-extended, result
   } amo_resp_t;
 
-  // D$ data requests
-  typedef struct packed {
-    logic [DCACHE_INDEX_WIDTH-1:0] address_index;
-    logic [DCACHE_TAG_WIDTH-1:0]   address_tag;
-    riscv::xlen_t                  data_wdata;
-    logic [DCACHE_USER_WIDTH-1:0]  data_wuser;
-    logic                          data_req;
-    logic                          data_we;
-    logic [(riscv::XLEN/8)-1:0]    data_be;
-    logic [1:0]                    data_size;
-    logic [DCACHE_TID_WIDTH-1:0]   data_id;
-    logic                          kill_req;
-    logic                          tag_valid;
-  } dcache_req_i_t;
-
-  typedef struct packed {
-    logic                         data_gnt;
-    logic                         data_rvalid;
-    logic [DCACHE_TID_WIDTH-1:0]  data_rid;
-    riscv::xlen_t                 data_rdata;
-    logic [DCACHE_USER_WIDTH-1:0] data_ruser;
-  } dcache_req_o_t;
+  localparam RVFI = cva6_config_pkg::CVA6ConfigRvfiTrace;
 
   // ----------------------
   // Arithmetic Functions
   // ----------------------
-  function automatic riscv::xlen_t sext32(logic [31:0] operand);
-    return {{riscv::XLEN - 32{operand[31]}}, operand[31:0]};
-  endfunction
-
-  // ----------------------
-  // Immediate functions
-  // ----------------------
-  function automatic logic [riscv::VLEN-1:0] uj_imm(logic [31:0] instruction_i);
-    return {
-      {44 + riscv::VLEN - 64{instruction_i[31]}},
-      instruction_i[19:12],
-      instruction_i[20],
-      instruction_i[30:21],
-      1'b0
-    };
-  endfunction
-
-  function automatic logic [riscv::VLEN-1:0] i_imm(logic [31:0] instruction_i);
-    return {{52 + riscv::VLEN - 64{instruction_i[31]}}, instruction_i[31:20]};
-  endfunction
-
-  function automatic logic [riscv::VLEN-1:0] sb_imm(logic [31:0] instruction_i);
-    return {
-      {51 + riscv::VLEN - 64{instruction_i[31]}},
-      instruction_i[31],
-      instruction_i[7],
-      instruction_i[30:25],
-      instruction_i[11:8],
-      1'b0
-    };
+  function automatic logic [63:0] sext32to64(logic [31:0] operand);
+    return {{32{operand[31]}}, operand[31:0]};
   endfunction
 
   // ----------------------
   // LSU Functions
   // ----------------------
-  // align data to address e.g.: shift data to be naturally 64
-  function automatic riscv::xlen_t data_align(logic [2:0] addr, logic [63:0] data);
-    // Set addr[2] to 1'b0 when 32bits
-    logic [ 2:0] addr_tmp = {(addr[2] && riscv::IS_XLEN64), addr[1:0]};
-    logic [63:0] data_tmp = {64{1'b0}};
-    case (addr_tmp)
-      3'b000: data_tmp[riscv::XLEN-1:0] = {data[riscv::XLEN-1:0]};
-      3'b001:
-      data_tmp[riscv::XLEN-1:0] = {data[riscv::XLEN-9:0], data[riscv::XLEN-1:riscv::XLEN-8]};
-      3'b010:
-      data_tmp[riscv::XLEN-1:0] = {data[riscv::XLEN-17:0], data[riscv::XLEN-1:riscv::XLEN-16]};
-      3'b011:
-      data_tmp[riscv::XLEN-1:0] = {data[riscv::XLEN-25:0], data[riscv::XLEN-1:riscv::XLEN-24]};
-      3'b100: data_tmp = {data[31:0], data[63:32]};
-      3'b101: data_tmp = {data[23:0], data[63:24]};
-      3'b110: data_tmp = {data[15:0], data[63:16]};
-      3'b111: data_tmp = {data[7:0], data[63:8]};
-    endcase
-    return data_tmp[riscv::XLEN-1:0];
-  endfunction
-
   // generate byte enable mask
   function automatic logic [7:0] be_gen(logic [2:0] addr, logic [1:0] size);
     case (size)
@@ -986,7 +732,7 @@ package ariane_pkg;
   // ----------------------
   function automatic logic [1:0] extract_transfer_size(fu_op op);
     case (op)
-      LD, SD, FLD, FSD,
+      LD, HLV_D, SD, HSV_D, FLD, FSD,
             AMO_LRD,   AMO_SCD,
             AMO_SWAPD, AMO_ADDD,
             AMO_ANDD,  AMO_ORD,
@@ -995,7 +741,8 @@ package ariane_pkg;
             AMO_MINDU: begin
         return 2'b11;
       end
-      LW, LWU, SW, FLW, FSW,
+      LW, LWU, HLV_W, HLV_WU, HLVX_WU,
+            SW, HSV_W, FLW, FSW,
             AMO_LRW,   AMO_SCW,
             AMO_SWAPW, AMO_ADDW,
             AMO_ANDW,  AMO_ORW,
@@ -1004,9 +751,60 @@ package ariane_pkg;
             AMO_MINWU: begin
         return 2'b10;
       end
-      LH, LHU, SH, FLH, FSH: return 2'b01;
-      LB, LBU, SB, FLB, FSB: return 2'b00;
-      default:               return 2'b11;
+      LH, LHU, HLV_H, HLV_HU, HLVX_HU, SH, HSV_H, FLH, FSH: return 2'b01;
+      LB, LBU, HLV_B, HLV_BU, SB, HSV_B, FLB, FSB:          return 2'b00;
+      default:                                              return 2'b11;
     endcase
   endfunction
+  // ----------------------
+  // MMU Functions
+  // ----------------------
+
+  // checks if final translation page size is 1G when H-extension is enabled
+  function automatic logic is_trans_1G(input logic s_st_enbl, input logic g_st_enbl,
+                                       input logic is_s_1G, input logic is_g_1G);
+    return (((is_s_1G && s_st_enbl) || !s_st_enbl) && ((is_g_1G && g_st_enbl) || !g_st_enbl));
+  endfunction : is_trans_1G
+
+  // checks if final translation page size is 2M when H-extension is enabled
+  function automatic logic is_trans_2M(input logic s_st_enbl, input logic g_st_enbl,
+                                       input logic is_s_1G, input logic is_s_2M,
+                                       input logic is_g_1G, input logic is_g_2M);
+    return  (s_st_enbl && g_st_enbl) ?
+                ((is_s_2M && (is_g_1G || is_g_2M)) || (is_g_2M && (is_s_1G || is_s_2M))) :
+                ((is_s_2M && s_st_enbl) || (is_g_2M && g_st_enbl));
+  endfunction : is_trans_2M
+
+  // computes the paddr based on the page size, ppn and offset
+  function automatic logic [40:0] make_gpaddr(input logic s_st_enbl, input logic is_1G,
+                                              input logic is_2M, input logic [63:0] vaddr,
+                                              input riscv::pte_t pte);
+    logic [40:0] gpaddr;
+    if (s_st_enbl) begin
+      gpaddr = {pte.ppn[28:0], vaddr[11:0]};
+      // Giga page
+      if (is_1G) gpaddr[29:12] = vaddr[29:12];
+      // Mega page
+      if (is_2M) gpaddr[20:12] = vaddr[20:12];
+    end else begin
+      gpaddr = vaddr[40:0];
+    end
+    return gpaddr;
+  endfunction : make_gpaddr
+
+  // computes the final gppn based on the guest physical address
+  function automatic logic [28:0] make_gppn(input logic s_st_enbl, input logic is_1G,
+                                            input logic is_2M, input logic [28:0] vpn,
+                                            input riscv::pte_t pte);
+    logic [28:0] gppn;
+    if (s_st_enbl) begin
+      gppn = pte.ppn[28:0];
+      if (is_2M) gppn[8:0] = vpn[8:0];
+      if (is_1G) gppn[17:0] = vpn[17:0];
+    end else begin
+      gppn = vpn;
+    end
+    return gppn;
+  endfunction : make_gppn
+
 endpackage

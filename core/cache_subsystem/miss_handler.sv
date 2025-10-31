@@ -20,10 +20,12 @@ module miss_handler
   import ariane_pkg::*;
   import std_cache_pkg::*;
 #(
-    parameter config_pkg::cva6_cfg_t CVA6Cfg   = config_pkg::cva6_cfg_empty,
-    parameter int unsigned           NR_PORTS  = 4,
-    parameter type                   axi_req_t = logic,
-    parameter type                   axi_rsp_t = logic
+    parameter config_pkg::cva6_cfg_t CVA6Cfg      = config_pkg::cva6_cfg_empty,
+    parameter int unsigned           NR_PORTS     = 4,
+    parameter type                   axi_req_t    = logic,
+    parameter type                   axi_rsp_t    = logic,
+    parameter type                   cache_line_t = logic,
+    parameter type                   cl_be_t      = logic
 ) (
     input logic clk_i,
     input logic rst_ni,
@@ -58,16 +60,36 @@ module miss_handler
     input amo_req_t amo_req_i,
     output amo_resp_t amo_resp_o,
     // Port to SRAMs, for refill and eviction
-    output logic [DCACHE_SET_ASSOC-1:0] req_o,
-    output logic [DCACHE_INDEX_WIDTH-1:0] addr_o,  // address into cache array
+    output logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] req_o,
+    output logic [CVA6Cfg.DCACHE_INDEX_WIDTH-1:0] addr_o,  // address into cache array
     output cache_line_t data_o,
     output cl_be_t be_o,
-    input cache_line_t [DCACHE_SET_ASSOC-1:0] data_i,
+    input cache_line_t [CVA6Cfg.DCACHE_SET_ASSOC-1:0] data_i,
     output logic we_o
 );
 
   // Three MSHR ports + AMO port
   parameter NR_BYPASS_PORTS = NR_PORTS + 1;
+
+  // convert one hot to bin for -> needed for cache replacement
+  function automatic logic [CVA6Cfg.DCACHE_SET_ASSOC_WIDTH-1:0] one_hot_to_bin(
+      input logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] in);
+    for (int unsigned i = 0; i < CVA6Cfg.DCACHE_SET_ASSOC; i++) begin
+      if (in[i]) return i;
+    end
+  endfunction
+  // get the first bit set, returns one hot value
+  function automatic logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] get_victim_cl(
+      input logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] valid_dirty);
+    // one-hot return vector
+    logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] oh = '0;
+    for (int unsigned i = 0; i < CVA6Cfg.DCACHE_SET_ASSOC; i++) begin
+      if (valid_dirty[i]) begin
+        oh[i] = 1'b1;
+        return oh;
+      end
+    end
+  endfunction
 
   // FSM states
   enum logic [3:0] {
@@ -90,61 +112,65 @@ module miss_handler
 
   // Registers
   mshr_t mshr_d, mshr_q;
-  logic [DCACHE_INDEX_WIDTH-1:0] cnt_d, cnt_q;
-  logic [DCACHE_SET_ASSOC-1:0] evict_way_d, evict_way_q;
+  logic [CVA6Cfg.DCACHE_INDEX_WIDTH-1:0] cnt_d, cnt_q;
+  logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] evict_way_d, evict_way_q;
   // cache line to evict
   cache_line_t evict_cl_d, evict_cl_q;
 
   logic serve_amo_d, serve_amo_q;
   // Request from one FSM
-  logic                [                  NR_PORTS-1:0]       miss_req_valid;
-  logic                [                  NR_PORTS-1:0]       miss_req_bypass;
-  logic                [                  NR_PORTS-1:0][63:0] miss_req_addr;
-  logic                [                  NR_PORTS-1:0][63:0] miss_req_wdata;
-  logic                [                  NR_PORTS-1:0]       miss_req_we;
-  logic                [                  NR_PORTS-1:0][ 7:0] miss_req_be;
-  logic                [                  NR_PORTS-1:0][ 1:0] miss_req_size;
+  logic                [                          NR_PORTS-1:0]       miss_req_valid;
+  logic                [                          NR_PORTS-1:0]       miss_req_bypass;
+  logic                [                          NR_PORTS-1:0][63:0] miss_req_addr;
+  logic                [                          NR_PORTS-1:0][63:0] miss_req_wdata;
+  logic                [                          NR_PORTS-1:0]       miss_req_we;
+  logic                [                          NR_PORTS-1:0][ 7:0] miss_req_be;
+  logic                [                          NR_PORTS-1:0][ 1:0] miss_req_size;
 
   // Bypass AMO port
-  bypass_req_t                                                amo_bypass_req;
-  bypass_rsp_t                                                amo_bypass_rsp;
+  bypass_req_t                                                        amo_bypass_req;
+  bypass_rsp_t                                                        amo_bypass_rsp;
 
   // Bypass ports <-> Arbiter
-  bypass_req_t         [           NR_BYPASS_PORTS-1:0]       bypass_ports_req;
-  bypass_rsp_t         [           NR_BYPASS_PORTS-1:0]       bypass_ports_rsp;
+  bypass_req_t         [                   NR_BYPASS_PORTS-1:0]       bypass_ports_req;
+  bypass_rsp_t         [                   NR_BYPASS_PORTS-1:0]       bypass_ports_rsp;
 
   // Arbiter <-> Bypass AXI adapter
-  bypass_req_t                                                bypass_adapter_req;
-  bypass_rsp_t                                                bypass_adapter_rsp;
+  bypass_req_t                                                        bypass_adapter_req;
+  bypass_rsp_t                                                        bypass_adapter_rsp;
 
   // Cache Line Refill <-> AXI
-  logic                                                       req_fsm_miss_valid;
-  logic                [                          63:0]       req_fsm_miss_addr;
-  logic                [         DCACHE_LINE_WIDTH-1:0]       req_fsm_miss_wdata;
-  logic                                                       req_fsm_miss_we;
-  logic                [     (DCACHE_LINE_WIDTH/8)-1:0]       req_fsm_miss_be;
-  ariane_pkg::ad_req_t                                        req_fsm_miss_req;
-  logic                [                           1:0]       req_fsm_miss_size;
+  logic                                                               req_fsm_miss_valid;
+  logic                [                                  63:0]       req_fsm_miss_addr;
+  logic                [         CVA6Cfg.DCACHE_LINE_WIDTH-1:0]       req_fsm_miss_wdata;
+  logic                                                               req_fsm_miss_we;
+  logic                [     (CVA6Cfg.DCACHE_LINE_WIDTH/8)-1:0]       req_fsm_miss_be;
+  ariane_pkg::ad_req_t                                                req_fsm_miss_req;
+  logic                [                                   1:0]       req_fsm_miss_size;
 
-  logic                                                       gnt_miss_fsm;
-  logic                                                       valid_miss_fsm;
-  logic                [    (DCACHE_LINE_WIDTH/64)-1:0][63:0] data_miss_fsm;
+  logic                                                               gnt_miss_fsm;
+  logic                                                               valid_miss_fsm;
+  logic                [    (CVA6Cfg.DCACHE_LINE_WIDTH/64)-1:0][63:0] data_miss_fsm;
 
   // Cache Management <-> LFSR
-  logic                                                       lfsr_enable;
-  logic                [          DCACHE_SET_ASSOC-1:0]       lfsr_oh;
-  logic                [$clog2(DCACHE_SET_ASSOC-1)-1:0]       lfsr_bin;
+  logic                                                               lfsr_enable;
+  logic                [          CVA6Cfg.DCACHE_SET_ASSOC-1:0]       lfsr_oh;
+  logic                [$clog2(CVA6Cfg.DCACHE_SET_ASSOC-1)-1:0]       lfsr_bin;
   // AMOs
-  ariane_pkg::amo_t                                           amo_op;
-  logic                [                          63:0]       amo_operand_b;
+  ariane_pkg::amo_t                                                   amo_op;
+  logic                [                                  63:0]       amo_operand_b;
+
+  // 32b request
+  logic                [                                  31:0]       halfword;
+  logic                [ $clog2(CVA6Cfg.DCACHE_LINE_WIDTH)-1:0]       cl_offset;
 
   // ------------------------------
   // Cache Management
   // ------------------------------
   always_comb begin : cache_management
-    automatic logic [DCACHE_SET_ASSOC-1:0] evict_way, valid_way;
+    automatic logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] evict_way, valid_way;
 
-    for (int unsigned i = 0; i < DCACHE_SET_ASSOC; i++) begin
+    for (int unsigned i = 0; i < CVA6Cfg.DCACHE_SET_ASSOC; i++) begin
       evict_way[i] = data_i[i].valid & data_i[i].dirty;
       valid_way[i] = data_i[i].valid;
     end
@@ -179,7 +205,7 @@ module miss_handler
     amo_bypass_req.wdata        = '0;
     amo_bypass_req.be           = '0;
     amo_bypass_req.size         = 2'b11;
-    amo_bypass_req.id           = 4'b1011;
+    amo_bypass_req.id           = 4'b1000 | 4'(NR_PORTS);  // map AMO id to the first non-MSHR id
     // core
     flush_ack_o                 = 1'b0;
     miss_o                      = 1'b0;  // to performance counter
@@ -199,21 +225,18 @@ module miss_handler
     amo_resp_o.result           = '0;
     amo_operand_b               = '0;
 
+    halfword                    = '0;
+    cl_offset                   = '0;
+
     case (state_q)
 
       IDLE: begin
         // lowest priority are AMOs, wait until everything else is served before going for the AMOs
         if (amo_req_i.req && !busy_i) begin
           // 1. Flush the cache
-          if (!serve_amo_q) begin
-            state_d = FLUSH_REQ_STATUS;
-            serve_amo_d = 1'b1;
-            cnt_d = '0;
-            // 2. Do the AMO
-          end else begin
-            state_d = AMO_REQ;
-            serve_amo_d = 1'b0;
-          end
+          state_d = FLUSH_REQ_STATUS;
+          serve_amo_d = 1'b1;
+          cnt_d = '0;
         end
         // check if we want to flush and can flush e.g.: we are not busy anymore
         // TODO: Check that the busy flag is indeed needed
@@ -226,16 +249,16 @@ module miss_handler
         for (int unsigned i = 0; i < NR_PORTS; i++) begin
           // here comes the refill portion of code
           if (miss_req_valid[i] && !miss_req_bypass[i]) begin
-            state_d      = MISS;
+            state_d = MISS;
             // we are taking another request so don't take the AMO
-            serve_amo_d  = 1'b0;
+            serve_amo_d = 1'b0;
             // save to MSHR
             mshr_d.valid = 1'b1;
-            mshr_d.we    = miss_req_we[i];
-            mshr_d.id    = i;
-            mshr_d.addr  = miss_req_addr[i][DCACHE_TAG_WIDTH+DCACHE_INDEX_WIDTH-1:0];
+            mshr_d.we = miss_req_we[i];
+            mshr_d.id = i;
+            mshr_d.addr = miss_req_addr[i][CVA6Cfg.DCACHE_TAG_WIDTH+CVA6Cfg.DCACHE_INDEX_WIDTH-1:0];
             mshr_d.wdata = miss_req_wdata[i];
-            mshr_d.be    = miss_req_be[i];
+            mshr_d.be = miss_req_be[i];
             break;
           end
         end
@@ -246,7 +269,7 @@ module miss_handler
         // 1. Check if there is an empty cache-line
         // 2. If not -> evict one
         req_o   = '1;
-        addr_o  = mshr_q.addr[DCACHE_INDEX_WIDTH-1:0];
+        addr_o  = mshr_q.addr[CVA6Cfg.DCACHE_INDEX_WIDTH-1:0];
         state_d = MISS_REPL;
         miss_o  = 1'b1;
       end
@@ -262,7 +285,7 @@ module miss_handler
             state_d = WB_CACHELINE_MISS;
             evict_cl_d.tag = data_i[lfsr_bin].tag;
             evict_cl_d.data = data_i[lfsr_bin].data;
-            cnt_d = mshr_q.addr[DCACHE_INDEX_WIDTH-1:0];
+            cnt_d = mshr_q.addr[CVA6Cfg.DCACHE_INDEX_WIDTH-1:0];
             // no - we can request a cache line now
           end else state_d = REQ_CACHELINE;
           // we have at least one free way
@@ -287,18 +310,17 @@ module miss_handler
       // ~> replace the cacheline
       SAVE_CACHELINE: begin
         // calculate cacheline offset
-        automatic logic [$clog2(DCACHE_LINE_WIDTH)-1:0] cl_offset;
-        cl_offset = mshr_q.addr[DCACHE_BYTE_OFFSET-1:3] << 6;
+        cl_offset = mshr_q.addr[CVA6Cfg.DCACHE_OFFSET_WIDTH-1:3] << 6;
         // we've got a valid response from refill unit
         if (valid_miss_fsm) begin
 
-          addr_o       = mshr_q.addr[DCACHE_INDEX_WIDTH-1:0];
-          req_o        = evict_way_q;
-          we_o         = 1'b1;
-          be_o         = '1;
-          be_o.vldrty  = evict_way_q;
-          data_o.tag   = mshr_q.addr[DCACHE_TAG_WIDTH+DCACHE_INDEX_WIDTH-1:DCACHE_INDEX_WIDTH];
-          data_o.data  = data_miss_fsm;
+          addr_o = mshr_q.addr[CVA6Cfg.DCACHE_INDEX_WIDTH-1:0];
+          req_o = evict_way_q;
+          we_o = 1'b1;
+          be_o = '1;
+          be_o.vldrty = evict_way_q;
+          data_o.tag   = mshr_q.addr[CVA6Cfg.DCACHE_TAG_WIDTH+CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_INDEX_WIDTH];
+          data_o.data = data_miss_fsm;
           data_o.valid = 1'b1;
           data_o.dirty = 1'b0;
 
@@ -328,8 +350,8 @@ module miss_handler
         req_fsm_miss_valid = 1'b1;
         req_fsm_miss_addr = {
           evict_cl_q.tag,
-          cnt_q[DCACHE_INDEX_WIDTH-1:DCACHE_BYTE_OFFSET],
-          {{DCACHE_BYTE_OFFSET} {1'b0}}
+          cnt_q[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH],
+          {{CVA6Cfg.DCACHE_OFFSET_WIDTH} {1'b0}}
         };
         req_fsm_miss_be = '1;
         req_fsm_miss_we = 1'b1;
@@ -370,17 +392,23 @@ module miss_handler
           // not dirty ~> increment and continue
         end else begin
           // increment and re-request
-          cnt_d       = cnt_q + (1'b1 << DCACHE_BYTE_OFFSET);
+          cnt_d       = cnt_q + (1'b1 << CVA6Cfg.DCACHE_OFFSET_WIDTH);
           state_d     = FLUSH_REQ_STATUS;
           addr_o      = cnt_q;
           req_o       = 1'b1;
           be_o.vldrty = INVALIDATE_ON_FLUSH ? '1 : '0;
           we_o        = 1'b1;
           // finished with flushing operation, go back to idle
-          if (cnt_q[DCACHE_INDEX_WIDTH-1:DCACHE_BYTE_OFFSET] == DCACHE_NUM_WORDS - 1) begin
+          if (cnt_q[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH] == CVA6Cfg.DCACHE_NUM_WORDS - 1) begin
             // only acknowledge if the flush wasn't triggered by an atomic
             flush_ack_o = ~serve_amo_q;
-            state_d     = IDLE;
+            // if we are flushing because of an AMO go to serve it
+            if (serve_amo_q) begin
+              state_d = AMO_REQ;
+              serve_amo_d = 1'b0;
+            end else begin
+              state_d = IDLE;
+            end
           end
         end
       end
@@ -393,9 +421,10 @@ module miss_handler
         we_o        = 1'b1;
         // only write the dirty array
         be_o.vldrty = '1;
-        cnt_d       = cnt_q + (1'b1 << DCACHE_BYTE_OFFSET);
+        cnt_d       = cnt_q + (1'b1 << CVA6Cfg.DCACHE_OFFSET_WIDTH);
         // finished initialization
-        if (cnt_q[DCACHE_INDEX_WIDTH-1:DCACHE_BYTE_OFFSET] == DCACHE_NUM_WORDS - 1) state_d = IDLE;
+        if (cnt_q[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH] == CVA6Cfg.DCACHE_NUM_WORDS - 1)
+          state_d = IDLE;
       end
       // ----------------------
       // AMOs
@@ -451,8 +480,6 @@ module miss_handler
           amo_resp_o.ack = 1'b1;
           // Request is assumed to be still valid (ack not granted yet)
           if (amo_req_i.size == 2'b10) begin
-            // 32b request
-            logic [31:0] halfword;
             if (amo_req_i.operand_a[2:0] == '0) begin
               // 64b aligned -> activate lower 4 byte lanes
               halfword = amo_bypass_rsp.rdata[31:0];
@@ -468,6 +495,8 @@ module miss_handler
           end
         end
       end
+
+      default: ;
     endcase
   end
 
@@ -479,12 +508,12 @@ module miss_handler
 
     for (int i = 0; i < NR_PORTS; i++) begin
       // check mshr for potential matching of other units, exclude the unit currently being served
-      if (mshr_q.valid && mshr_addr_i[i][55:DCACHE_BYTE_OFFSET] == mshr_q.addr[55:DCACHE_BYTE_OFFSET]) begin
+      if (mshr_q.valid && mshr_addr_i[i][55:CVA6Cfg.DCACHE_OFFSET_WIDTH] == mshr_q.addr[55:CVA6Cfg.DCACHE_OFFSET_WIDTH]) begin
         mshr_addr_matches_o[i] = 1'b1;
       end
 
       // same as previous, but checking only the index
-      if (mshr_q.valid && mshr_addr_i[i][DCACHE_INDEX_WIDTH-1:DCACHE_BYTE_OFFSET] == mshr_q.addr[DCACHE_INDEX_WIDTH-1:DCACHE_BYTE_OFFSET]) begin
+      if (mshr_q.valid && mshr_addr_i[i][CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH] == mshr_q.addr[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH]) begin
         mshr_index_matches_o[i] = 1'b1;
       end
     end
@@ -569,13 +598,13 @@ module miss_handler
   // Bypass AXI Interface
   // ----------------------
   // Cast bypass_adapter_req.addr to axi_adapter port size
-  logic [riscv::XLEN-1:0] bypass_addr;
+  logic [CVA6Cfg.XLEN-1:0] bypass_addr;
   assign bypass_addr = bypass_adapter_req.addr;
 
   axi_adapter #(
       .CVA6Cfg              (CVA6Cfg),
       .DATA_WIDTH           (64),
-      .CACHELINE_BYTE_OFFSET(DCACHE_BYTE_OFFSET),
+      .CACHELINE_BYTE_OFFSET(CVA6Cfg.DCACHE_OFFSET_WIDTH),
       .axi_req_t            (axi_req_t),
       .axi_rsp_t            (axi_rsp_t)
   ) i_bypass_axi_adapter (
@@ -604,13 +633,13 @@ module miss_handler
   // Cache Line AXI Refill
   // ----------------------
   // Cast req_fsm_miss_addr to axi_adapter port size
-  logic [riscv::XLEN-1:0] miss_addr;
+  logic [CVA6Cfg.XLEN-1:0] miss_addr;
   assign miss_addr = req_fsm_miss_addr;
 
   axi_adapter #(
       .CVA6Cfg              (CVA6Cfg),
-      .DATA_WIDTH           (DCACHE_LINE_WIDTH),
-      .CACHELINE_BYTE_OFFSET(DCACHE_BYTE_OFFSET),
+      .DATA_WIDTH           (CVA6Cfg.DCACHE_LINE_WIDTH),
+      .CACHELINE_BYTE_OFFSET(CVA6Cfg.DCACHE_OFFSET_WIDTH),
       .axi_req_t            (axi_req_t),
       .axi_rsp_t            (axi_rsp_t)
   ) i_miss_axi_adapter (
@@ -639,7 +668,7 @@ module miss_handler
   // Replacement LFSR
   // -----------------
   lfsr_8bit #(
-      .WIDTH(DCACHE_SET_ASSOC)
+      .WIDTH(CVA6Cfg.DCACHE_SET_ASSOC)
   ) i_lfsr (
       .en_i          (lfsr_enable),
       .refill_way_oh (lfsr_oh),
@@ -689,7 +718,11 @@ module axi_adapter_arbiter #(
     input  rsp_t                rsp_i
 );
 
-  localparam MAX_OUTSTANDING_CNT_WIDTH = $clog2(MAX_OUTSTANDING_REQ + 1) > 0 ? $clog2(MAX_OUTSTANDING_REQ + 1) : 1;
+  localparam MAX_OUTSTANDING_CNT_WIDTH = $clog2(
+      MAX_OUTSTANDING_REQ + 1
+  ) > 0 ? $clog2(
+      MAX_OUTSTANDING_REQ + 1
+  ) : 1;
 
   typedef logic [MAX_OUTSTANDING_CNT_WIDTH-1:0] outstanding_cnt_t;
 
@@ -723,7 +756,6 @@ module axi_adapter_arbiter #(
 
     rsp_o = '0;
     rsp_o[sel_q].rdata = rsp_i.rdata;
-    rsp_o[sel_q].valid = rsp_i.valid;
 
     case (state_q)
 
@@ -750,6 +782,18 @@ module axi_adapter_arbiter #(
       end
 
       SERVING: begin
+        // We can accept multiple outstanding transactions from same port.
+        // To ensure fairness, we allow this only if all other ports are idle
+        if ((!req_o.req) && !any_unselected_port_valid &&
+          (outstanding_cnt_q != (MAX_OUTSTANDING_REQ - 1))) begin
+          if (req_i[sel_q].req) begin
+            req_d = req_i[sel_q];
+            req_o = req_i[sel_q];
+            rsp_o[sel_q].gnt = 1'b1;
+            state_d = SERVING;
+          end
+        end
+
         // Count outstanding transactions, i.e. requests which have been
         // granted but response hasn't arrived yet
         if (req_o.req && rsp_i.gnt) begin
@@ -761,17 +805,6 @@ module axi_adapter_arbiter #(
           rsp_o[sel_q].valid = 1'b1;
 
           if ((outstanding_cnt_d == 0) && (!req_o.req || rsp_i.gnt)) state_d = IDLE;
-        end
-
-        // We can accept multiple outstanding transactions from same port.
-        // To ensure fairness, we allow this only if all other ports are idle
-        if ((!req_o.req || rsp_i.gnt) && !any_unselected_port_valid &&
-          (outstanding_cnt_d != MAX_OUTSTANDING_REQ)) begin
-          if (req_i[sel_q].req) begin
-            req_d = req_i[sel_q];
-            rsp_o[sel_q].gnt = 1'b1;
-            state_d = SERVING;
-          end
         end
       end
 
