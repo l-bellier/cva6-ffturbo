@@ -45,7 +45,7 @@ module bfly
     logic bfly_type; // 1'b0 : 2 | 1'b1 : 4
     logic fill_buffer;
     logic inv;
-    logic [4:0]  m;
+    logic [7:0]  m;
     logic [31:0] tw_index;
     logic [31:0] tw1_buffer [32];
     logic [31:0] tw2_buffer [32];
@@ -223,7 +223,7 @@ module bfly
                     tw_index    <= registers_i[0][1] ? '0 : tw_index;
                     inv         <= registers_i[0][2];
                     bfly_type   <= registers_i[0][3];
-                    m           <= registers_i[0][8:4];
+                    m           <= registers_i[0][11:4];
                 end
                 cvxif_instr_pkg::BFLY_SET_W1W3: begin
                     tw1_buffer[tw_index] <= registers_i[0];
