@@ -46,6 +46,6 @@ module c_mult (
     assign res_r = 16'( (res_r_full + 32'sd16384) >>> 15 );
     assign res_i = 16'( (res_i_full + 32'sd16384) >>> 15 );
 
-    assign res = {res_r, res_i};
+    assign res = {res_i, res_r};
 
 endmodule : c_mult
