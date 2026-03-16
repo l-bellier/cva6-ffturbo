@@ -6,6 +6,10 @@
 // You may obtain a copy of the License at https://solderpad.org/licenses/
 //
 // Original Author: Guillaume Chauvon (guillaume.chauvon@thalesgroup.com)
+//
+// Modified : Lucas Bellier (lucas.bellier@imt-atlantique.net)
+// Desciption : Modification des instructions customs vers des instruction 
+//              pour les papillons 2 et 4 
 
 
 
@@ -14,16 +18,16 @@ package cvxif_instr_pkg;
   typedef enum logic [3:0] {
     ILLEGAL = 4'b0000,
     NOP = 4'b0001,
-    ADD = 4'b0010,
-    DOUBLE_RS1 = 4'b0011,
-    DOUBLE_RS2 = 4'b0100,
-    ADD_MULTI = 4'b0101,
-    MADD_RS3_R4 = 4'b0110,
-    MSUB_RS3_R4 = 4'b0111,
-    NMADD_RS3_R4 = 4'b1000,
-    NMSUB_RS3_R4 = 4'b1001,
-    ADD_RS3_R = 4'b1111
-  } opcode_t;
+    BFLY_CFG = 4'b0010,
+    BFLY_SET_F0F2 = 4'b0011,
+    BFLY_SET_F1F3 = 4'b0100,
+    BFLY_SET_W1W3 = 4'b0101,
+    BFLY_SET_W2 = 4'b0110,
+    BFLY_GET_F0 = 4'b0111,
+    BFLY_GET_F1 = 4'b1000,
+    BFLY_GET_F2 = 4'b1001,
+    BFLY_GET_F3 = 4'b1010
+  } fft_opcode_t;
 
 
   typedef struct packed {
@@ -51,88 +55,87 @@ package cvxif_instr_pkg;
     compressed_resp_t resp;
   } copro_compressed_resp_t;
 
-  // 4 Possible RISCV instructions for Coprocessor
   parameter int unsigned NbInstr = 10;
   parameter copro_issue_resp_t CoproInstr[NbInstr] = '{
       '{
           // Custom Nop
           instr:
-          32'b00000_00_00000_00000_0_00_00000_1111011,  // custom3 opcode
-          mask: 32'b11111_11_00000_00000_1_11_00000_1111111,
+          32'b0000000_00000_00000_000_00000_1111011,  // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
           resp : '{accept : 1'b1, writeback : 1'b0, register_read : {1'b0, 1'b0, 1'b0}},
           opcode : NOP
       },
       '{
-          // Custom Add : cus_add rd, rs1, rs2
+          // BFLY_CFG
           instr:
-          32'b00000_00_00000_00000_0_01_00000_1111011,  // custom3 opcode
-          mask: 32'b11111_11_00000_00000_1_11_00000_1111111,
-          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b0, 1'b1, 1'b1}},
-          opcode : ADD
+          32'b0000001_00000_00000_000_00000_1111011,  // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b0, register_read : {1'b0, 1'b0, 1'b1}},
+          opcode : BFLY_CFG
       },
       '{
-          // Custom Add rs1 : cus_add rd, rs1, rs1
+          // BFLY_SET_F0F2
           instr:
-          32'b00000_01_00000_00000_0_01_00000_1111011,  // custom3 opcode
-          mask: 32'b11111_11_00000_00000_1_11_00000_1111111,
-          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b0, 1'b0, 1'b1}},
-          opcode : DOUBLE_RS1
+          32'b0000010_00000_00000_000_00000_1111011,  // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b0, register_read : {1'b0, 1'b1, 1'b1}},
+          opcode : BFLY_SET_F0F2
       },
       '{
-          // Custom Add rs2 : cus_add rd, rs2, rs2
+          // BFLY_SET_F1F3
           instr:
-          32'b00000_10_00000_00000_0_01_00000_1111011,  // custom3 opcode
-          mask: 32'b11111_11_00000_00000_1_11_00000_1111111,
-          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b0, 1'b1, 1'b0}},
-          opcode : DOUBLE_RS2
+          32'b0000011_00000_00000_000_00000_1111011,  // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b0, register_read : {1'b0, 1'b1, 1'b1}},
+          opcode : BFLY_SET_F1F3
       },
       '{
-          // Custom Add Multi rs1 : cus_add rd, rs1, rs1
+          // BFLY_SET_W1W3
           instr:
-          32'b00000_11_00000_00000_0_01_00000_1111011,  // custom3 opcode
-          mask: 32'b11111_11_00000_00000_1_11_00000_1111111,
-          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b0, 1'b1, 1'b1}},
-          opcode : ADD_MULTI
+          32'b0000100_00000_00000_000_00000_1111011,  // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b0, register_read : {1'b0, 1'b1, 1'b1}},
+          opcode : BFLY_SET_W1W3
       },
       '{
-          // Custom Add Multi rs1 : cus_add rd, rs1, rs1
+          // BFLY_SET_W2
           instr:
-          32'b00001_00_00000_00000_0_01_00000_1111011,  // custom3 opcode
-          mask: 32'b11111_11_00000_00000_1_11_00000_1111111,
-          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b1, 1'b1, 1'b1}},
-          opcode : ADD_RS3_R
+          32'b0000101_00000_00000_000_00000_1111011,  // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b0, register_read : {1'b0, 1'b0, 1'b1}},
+          opcode : BFLY_SET_W2
       },
       '{
-          // Custom Add Multi rs1 : cus_add rd, rs1, rs1
+          // BFLY_GET_F0
           instr:
-          32'b00000_00_00000_00000_0_00_00000_1000011,  // MADD opcode
-          mask: 32'b00000_11_00000_00000_1_11_00000_1111111,
-          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b1, 1'b1, 1'b1}},
-          opcode : MADD_RS3_R4
+          32'b0000110_00000_00000_000_00000_1111011, // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b0, 1'b0, 1'b0}},
+          opcode : BFLY_GET_F0
       },
       '{
-          // Custom Add Multi rs1 : cus_add rd, rs1, rs1
+          // BFLY_GET_F1
           instr:
-          32'b00000_00_00000_00000_0_00_00000_1000111,  // MSUB opcode
-          mask: 32'b00000_11_00000_00000_1_11_00000_1111111,
-          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b1, 1'b1, 1'b1}},
-          opcode : MSUB_RS3_R4
+          32'b0000111_00000_00000_000_00000_1111011, // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b0, 1'b0, 1'b0}},
+          opcode : BFLY_GET_F1
       },
       '{
-          // Custom Add Multi rs1 : cus_add rd, rs1, rs1
+          // BFLY_GET_F2
           instr:
-          32'b00000_00_00000_00000_0_00_00000_1001011,  // NMSUB opcode
-          mask: 32'b00000_11_00000_00000_1_11_00000_1111111,
-          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b1, 1'b1, 1'b1}},
-          opcode : NMSUB_RS3_R4
+          32'b0001000_00000_00000_000_00000_1111011, // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b0, 1'b0, 1'b0}},
+          opcode : BFLY_GET_F2
       },
       '{
-          // Custom Add Multi rs1 : cus_add rd, rs1, rs1
+          // BFLY_GET_F3
           instr:
-          32'b00000_00_00000_00000_0_00_00000_1001111,  // NMADD opcode
-          mask: 32'b00000_11_00000_00000_1_11_00000_1111111,
-          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b1, 1'b1, 1'b1}},
-          opcode : NMADD_RS3_R4
+          32'b0001001_00000_00000_000_00000_1111011, // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b0, 1'b0, 1'b0}},
+          opcode : BFLY_GET_F3
       }
   };
 

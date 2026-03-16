@@ -5,7 +5,8 @@
 // SPDX-License-Identifier: Apache-2.0 WITH SHL-2.0
 // You may obtain a copy of the License at https://solderpad.org/licenses/
 //
-// Original Author: Guillaume Chauvon
+// Modified : Lucas Bellier (lucas.bellier@imt-atlantique.net)
+// Desciption : Adaptation pour les fonction de papillon
 
 module cvxif_example_coprocessor
   import cvxif_instr_pkg::*;
@@ -114,15 +115,15 @@ module cvxif_example_coprocessor
       .rd_o            (issue_rd)
   );
 
-  logic alu_valid;
+  logic bfly_valid;
   // Result interface
-  copro_alu #(
+  bfly #(
       .NrRgprPorts(NrRgprPorts),
       .XLEN(XLEN),
       .hartid_t(hartid_t),
       .id_t(id_t),
       .registers_t(registers_t)
-  ) i_copro_alu (
+  ) i_bfly (
       .clk_i      (clk_i),
       .rst_ni     (rst_ni),
       .registers_i(registers),
@@ -133,13 +134,13 @@ module cvxif_example_coprocessor
       .hartid_o   (hartid),
       .id_o       (id),
       .result_o   (result),
-      .valid_o    (alu_valid),
+      .valid_o    (bfly_valid),
       .rd_o       (rd),
       .we_o       (we)
   );
 
   always_comb begin
-    cvxif_resp_o.result_valid  = alu_valid;  //TODO Should wait for ready from CPU
+    cvxif_resp_o.result_valid  = bfly_valid;  //TODO Should wait for ready from CPU
     cvxif_resp_o.result.hartid = hartid;
     cvxif_resp_o.result.id     = id;
     cvxif_resp_o.result.data   = result;
