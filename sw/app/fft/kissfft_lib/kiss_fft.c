@@ -65,6 +65,46 @@ static void kf_bfly2(
     }while (--m);
 }
 
+static void kf_bfly4_copro(
+        kiss_fft_cpx * Fout,
+        const size_t fstride,
+        const kiss_fft_cfg st,
+        const size_t m
+        )
+{
+    kiss_fft_cpx *tw1,*tw2,*tw3;
+    size_t k=m;
+    const size_t m2=2*m;
+    const size_t m3=3*m;
+
+    if (st->inverse) {
+        BFLY_CFG(BFLY_CFG_BFLY4 | BFLY_CFG_INV_FFT | BFLY_CFG_FILL_BUFF | BFLY_CFG_RST_BUFF | (m << 4));
+    }else{
+        BFLY_CFG(BFLY_CFG_BFLY4 | BFLY_CFG_FILL_BUFF | BFLY_CFG_RST_BUFF | (m << 4));
+    }
+
+    tw3 = tw2 = tw1 = st->twiddles;
+
+    do {
+        BFLY_SET_F0F2(*(uint32_t*)Fout, *(uint32_t*)&Fout[m2]);
+        BFLY_SET_F1F3(*(uint32_t*)&Fout[m], *(uint32_t*)&Fout[m3]);
+        BFLY_SET_W1W3(*(uint32_t*)tw1, *(uint32_t*)tw3);
+        BFLY_SET_W2(*(uint32_t*)tw2);
+
+        tw1 += fstride;
+        tw2 += fstride*2;
+        tw3 += fstride*3;
+
+        BFLY_GET_F0(*(uint32_t*)Fout);
+        BFLY_GET_F1(*(uint32_t*)&Fout[m]);
+        BFLY_GET_F2(*(uint32_t*)&Fout[m2]);
+        BFLY_GET_F3(*(uint32_t*)&Fout[m3]);
+
+        ++Fout;
+    } while (--k);
+}
+
+
 static void kf_bfly4(
         kiss_fft_cpx * Fout,
         const size_t fstride,
@@ -323,7 +363,7 @@ void kf_work(
     switch (p) {
         case 2: kf_bfly2_copro(Fout,fstride,st,m); break;
         case 3: kf_bfly3(Fout,fstride,st,m); break;
-        case 4: kf_bfly4(Fout,fstride,st,m); break;
+        case 4: kf_bfly4_copro(Fout,fstride,st,m); break;
         case 5: kf_bfly5(Fout,fstride,st,m); break;
         default: kf_bfly_generic(Fout,fstride,st,m,p); break;
     }

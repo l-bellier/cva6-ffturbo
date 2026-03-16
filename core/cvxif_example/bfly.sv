@@ -95,7 +95,6 @@ module bfly
     //Etage 3 additions/soustractions
 
     logic [31:0] add0, add1, add2, add3;
-    logic [31:0] add0_ff, add1_ff, add2_ff, add3_ff;
 
     c_add c_add0 (
         .operand_a(mul0_ff),
@@ -125,14 +124,14 @@ module bfly
     logic [31:0] bfly4_0_o, bfly4_1_o, bfly4_2_o, bfly4_3_o;
 
     c_add c_add_o (
-        .operand_a(add0_ff),
-        .operand_b(add2_ff),
+        .operand_a(add0),
+        .operand_b(add2),
         .res(bfly4_0_o)
     );
 
     c_sub c_sub_o (
-        .operand_a(add0_ff),
-        .operand_b(add2_ff),
+        .operand_a(add0),
+        .operand_b(add2),
         .res(bfly4_2_o)
     );
 
@@ -140,8 +139,8 @@ module bfly
         .cross_sub(1'b0)
     ) cross_add (
         .inv(inv),
-        .operand_a(add1_ff),
-        .operand_b(add3_ff),
+        .operand_a(add1),
+        .operand_b(add3),
         .res(bfly4_1_o)
     );
 
@@ -149,8 +148,8 @@ module bfly
         .cross_sub(1'b1)
     ) cross_sub (
         .inv(inv),
-        .operand_a(add1_ff),
-        .operand_b(add3_ff),
+        .operand_a(add1),
+        .operand_b(add3),
         .res(bfly4_3_o)
     );
 
@@ -170,18 +169,7 @@ module bfly
             mul2_ff <= '0;
             mul3_ff <= '0;
 
-            // Etage 3 : Additions / Soustractions
-            add0_ff <= '0;
-            add1_ff <= '0;
-            add2_ff <= '0;
-            add3_ff <= '0;
-
         end else begin
-            // Pipeline libre
-            add0_ff <= add0;
-            add1_ff <= add1;
-            add2_ff <= add2;
-            add3_ff <= add3;
             // Pipeline piloté
             if(issue_ready_i) begin
             case (opcode_i)
@@ -250,11 +238,11 @@ module bfly
 
         case (opcode_i)
             cvxif_instr_pkg::BFLY_GET_F0: begin
-                next_result = bfly_type ? bfly4_0_o : add0_ff;
+                next_result = bfly_type ? bfly4_0_o : add0;
                 next_we     = 1'b1;
             end
             cvxif_instr_pkg::BFLY_GET_F1: begin
-                next_result = bfly_type ? bfly4_1_o : add1_ff;
+                next_result = bfly_type ? bfly4_1_o : add1;
                 next_we     = 1'b1;
             end
             cvxif_instr_pkg::BFLY_GET_F2: begin

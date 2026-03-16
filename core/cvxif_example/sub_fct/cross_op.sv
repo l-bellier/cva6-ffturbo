@@ -33,7 +33,7 @@ module cross_op #(
     logic signed [15:0] res_r, res_i;
 
     always_comb begin
-        if (inv == cross_sub) begin
+        if (inv != cross_sub) begin
             res_r = a_r - b_i;
             res_i = a_i + b_r;
         end else begin
