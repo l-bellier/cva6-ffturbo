@@ -27,7 +27,7 @@ package cvxif_instr_pkg;
     BFLY_GET_F1 = 4'b1000,
     BFLY_GET_F2 = 4'b1001,
     BFLY_GET_F3 = 4'b1010
-  } fft_opcode_t;
+  } opcode_t;
 
 
   typedef struct packed {

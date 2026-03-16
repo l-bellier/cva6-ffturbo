@@ -12,7 +12,7 @@
 
 
 module bfly 
-    import cvxif_fft_instr_pkg::*;
+    import cvxif_instr_pkg::*;
 #(
     parameter int unsigned NrRgprPorts = 2,
     parameter int unsigned XLEN = 32,
@@ -24,7 +24,7 @@ module bfly
     input  logic                  clk_i,
     input  logic                  rst_ni,
     input  registers_t            registers_i,
-    input  fft_opcode_t           opcode_i,
+    input  opcode_t           opcode_i,
     input  hartid_t               hartid_i,
     input  id_t                   id_i,
     input  logic       [     4:0] rd_i,
@@ -168,7 +168,7 @@ module bfly
             mul1_ff <= '0;
             mul2_ff <= '0;
             mul3_ff <= '0;
-            
+
             // Etage 3 : Additions / Soustractions
             add0_ff <= '0;
             add1_ff <= '0;
@@ -183,15 +183,15 @@ module bfly
             add3_ff <= add3;
             // Pipeline piloté
             case (opcode_i)
-                cvxif_fft_instr_pkg::BFLY_SET_F0F2: begin
+                cvxif_instr_pkg::BFLY_SET_F0F2: begin
                     div0_ff <= div0;
                     div2_ff <= div1;
                 end
-                cvxif_fft_instr_pkg::BFLY_SET_F1F3: begin
+                cvxif_instr_pkg::BFLY_SET_F1F3: begin
                     div1_ff <= div0;
                     div3_ff <= div1;
                 end
-                cvxif_fft_instr_pkg::BFLY_SET_W2: begin
+                cvxif_instr_pkg::BFLY_SET_W2: begin
                     mul0_ff <= div0_ff;
                     mul1_ff <= mul1;
                     mul2_ff <= mul2;
@@ -214,18 +214,18 @@ module bfly
             tw3_buffer  <= '{default: '0};
         end else begin
             case (opcode_i)
-                cvxif_fft_instr_pkg::BFLY_CFG: begin
+                cvxif_instr_pkg::BFLY_CFG: begin
                     fill_buffer <= registers_i[0][0];
                     tw_index    <= registers_i[0][1] ? '0 : tw_index;
                     inv         <= registers_i[0][2];
                     bfly_type   <= registers_i[0][3];
                     m           <= registers_i[0][8:4];
                 end
-                cvxif_fft_instr_pkg::BFLY_SET_W1W3: begin
+                cvxif_instr_pkg::BFLY_SET_W1W3: begin
                     tw1_buffer[tw_index] <= registers_i[0];
                     tw3_buffer[tw_index] <= registers_i[1];
                 end
-                cvxif_fft_instr_pkg::BFLY_SET_W2: begin
+                cvxif_instr_pkg::BFLY_SET_W2: begin
                     tw2_buffer[tw_index] <= (fill_buffer) ? registers_i[0] : tw2_buffer[tw_index];
                     tw_index <= (tw_index == (m - 1)) ? '0 : tw_index + 1;
                 end
@@ -236,7 +236,7 @@ module bfly
     // Gestion des sorties
     always_comb begin
         case (opcode_i)
-            cvxif_fft_instr_pkg::BFLY_CFG: begin
+            cvxif_instr_pkg::BFLY_CFG: begin
                 result_o = '0;
                 hartid_o = hartid_i;
                 id_o     = id_i;
@@ -244,7 +244,7 @@ module bfly
                 rd_o     = '0;
                 we_o     = '0;
             end
-            cvxif_fft_instr_pkg::BFLY_SET_F0F2: begin
+            cvxif_instr_pkg::BFLY_SET_F0F2: begin
                 result_o = '0;
                 hartid_o = hartid_i;
                 id_o     = id_i;
@@ -252,7 +252,7 @@ module bfly
                 rd_o     = '0;
                 we_o     = '0;
             end
-            cvxif_fft_instr_pkg::BFLY_SET_F1F3: begin
+            cvxif_instr_pkg::BFLY_SET_F1F3: begin
                 result_o = '0;
                 hartid_o = hartid_i;
                 id_o     = id_i;
@@ -260,7 +260,7 @@ module bfly
                 rd_o     = '0;
                 we_o     = '0;
             end
-            cvxif_fft_instr_pkg::BFLY_SET_W1W3: begin
+            cvxif_instr_pkg::BFLY_SET_W1W3: begin
                 result_o = '0;
                 hartid_o = hartid_i;
                 id_o     = id_i;
@@ -268,7 +268,7 @@ module bfly
                 rd_o     = '0;
                 we_o     = '0;
             end
-            cvxif_fft_instr_pkg::BFLY_SET_W2: begin
+            cvxif_instr_pkg::BFLY_SET_W2: begin
                 result_o = '0;
                 hartid_o = hartid_i;
                 id_o     = id_i;
@@ -276,7 +276,7 @@ module bfly
                 rd_o     = '0;
                 we_o     = '0;
             end
-            cvxif_fft_instr_pkg::BFLY_GET_F0: begin
+            cvxif_instr_pkg::BFLY_GET_F0: begin
                 result_o = bfly_type ? bfly4_0_o : add0_ff;
                 hartid_o = hartid_i;
                 id_o     = id_i;
@@ -284,7 +284,7 @@ module bfly
                 rd_o     = rd_i;
                 we_o     = 1'b1;
             end
-            cvxif_fft_instr_pkg::BFLY_GET_F1: begin
+            cvxif_instr_pkg::BFLY_GET_F1: begin
                 result_o = bfly_type ? bfly4_1_o : add1_ff;
                 hartid_o = hartid_i;
                 id_o     = id_i;
@@ -292,7 +292,7 @@ module bfly
                 rd_o     = rd_i;
                 we_o     = 1'b1;
             end
-            cvxif_fft_instr_pkg::BFLY_GET_F2: begin
+            cvxif_instr_pkg::BFLY_GET_F2: begin
                 result_o = bfly4_2_o;
                 hartid_o = hartid_i;
                 id_o     = id_i;
@@ -300,7 +300,7 @@ module bfly
                 rd_o     = rd_i;
                 we_o     = 1'b1;
             end
-            cvxif_fft_instr_pkg::BFLY_GET_F3: begin
+            cvxif_instr_pkg::BFLY_GET_F3: begin
                 result_o = bfly4_3_o;
                 hartid_o = hartid_i;
                 id_o     = id_i;
