@@ -28,10 +28,15 @@ ${CVA6_REPO_DIR}/core/include/build_config_pkg.sv
 
 //CVXIF
 ${CVA6_REPO_DIR}/core/cvxif_example/include/cvxif_instr_pkg.sv
+${CVA6_REPO_DIR}/core/cvxif_example/sub_fct/c_add.sv
+${CVA6_REPO_DIR}/core/cvxif_example/sub_fct/c_sub.sv
+${CVA6_REPO_DIR}/core/cvxif_example/sub_fct/c_mult.sv
+${CVA6_REPO_DIR}/core/cvxif_example/sub_fct/c_fixdiv.sv
+${CVA6_REPO_DIR}/core/cvxif_example/sub_fct/cross_op.sv
 ${CVA6_REPO_DIR}/core/cvxif_example/cvxif_example_coprocessor.sv
 ${CVA6_REPO_DIR}/core/cvxif_example/instr_decoder.sv
 ${CVA6_REPO_DIR}/core/cvxif_example/compressed_instr_decoder.sv
-${CVA6_REPO_DIR}/core/cvxif_example/copro_alu.sv
+${CVA6_REPO_DIR}/core/cvxif_example/bfly.sv
 
 
 // Common Cells
