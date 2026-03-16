@@ -6,10 +6,41 @@
  *  See COPYING file for more information.
  */
 
+#include <stdint.h>
 #include "_kiss_fft_guts.h"
 /* The guts header contains all the multiplication and addition macros that are defined for
  fixed or floating point complex numbers.  It also delares the kf_ internal functions.
  */
+
+#include "bfly_instr.h"
+/* Le header bfly permet l'utilisation des macros définies spécifiquement pour le coprocesseur.
+*/
+
+static void kf_bfly2_copro(
+        kiss_fft_cpx * Fout,
+        const size_t fstride,
+        const kiss_fft_cfg st,
+        int m
+        )
+{
+    kiss_fft_cpx * Fout2;
+    kiss_fft_cpx * tw1 = st->twiddles;
+    Fout2 = Fout + m;
+    
+    BFLY_CFG(BFLY_CFG_FILL_BUFF | BFLY_CFG_RST_BUFF | (m << 4)); // BFLY2 sans enregistrement des twiddles
+    
+    do {
+        BFLY_SET_F0F2(*(uint32_t*)Fout, *(uint32_t*)Fout2);
+        BFLY_SET_W2(*(uint32_t*)tw1);
+        tw1 += fstride;
+        
+        BFLY_GET_F0(*(uint32_t*)Fout);
+        BFLY_GET_F1(*(uint32_t*)Fout2);
+
+        ++Fout2;
+        ++Fout;
+    } while (--m);
+}
 
 static void kf_bfly2(
         kiss_fft_cpx * Fout,
@@ -290,7 +321,7 @@ void kf_work(
 
     // recombine the p smaller DFTs
     switch (p) {
-        case 2: kf_bfly2(Fout,fstride,st,m); break;
+        case 2: kf_bfly2_copro(Fout,fstride,st,m); break;
         case 3: kf_bfly3(Fout,fstride,st,m); break;
         case 4: kf_bfly4(Fout,fstride,st,m); break;
         case 5: kf_bfly5(Fout,fstride,st,m); break;
