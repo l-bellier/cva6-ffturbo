@@ -28,6 +28,7 @@ module bfly
     input  hartid_t               hartid_i,
     input  id_t                   id_i,
     input  logic       [     4:0] rd_i,
+    input  logic                  issue_ready_i,
     output logic       [XLEN-1:0] result_o,
     output hartid_t               hartid_o,
     output id_t                   id_o,
@@ -182,6 +183,7 @@ module bfly
             add2_ff <= add2;
             add3_ff <= add3;
             // Pipeline piloté
+            if(issue_ready_i) begin
             case (opcode_i)
                 cvxif_instr_pkg::BFLY_SET_F0F2: begin
                     div0_ff <= div0;
@@ -198,6 +200,7 @@ module bfly
                     mul3_ff <= mul3;
                 end
             endcase
+            end
         end
     end
 
@@ -213,6 +216,7 @@ module bfly
             tw2_buffer  <= '{default: '0};
             tw3_buffer  <= '{default: '0};
         end else begin
+            if (issue_ready_i) begin // Registres valides
             case (opcode_i)
                 cvxif_instr_pkg::BFLY_CFG: begin
                     fill_buffer <= registers_i[0][0];
@@ -227,96 +231,90 @@ module bfly
                 end
                 cvxif_instr_pkg::BFLY_SET_W2: begin
                     tw2_buffer[tw_index] <= (fill_buffer) ? registers_i[0] : tw2_buffer[tw_index];
-                    tw_index <= (tw_index == (m - 1)) ? '0 : tw_index + 1;
+                    tw_index <= (tw_index == (m - 1) || tw_index == 'h1F) ? '0 : tw_index + 1;
                 end
             endcase
+            end
         end
     end
 
-    // Gestion des sorties
+    // Logique de sortie
+    logic [31:0] next_result;
+    logic [4:0]  next_rd;
+    logic        next_we;
+
     always_comb begin
+        next_result = '0;
+        next_rd     = rd_i;
+        next_we     = 1'b0;
+
         case (opcode_i)
-            cvxif_instr_pkg::BFLY_CFG: begin
-                result_o = '0;
-                hartid_o = hartid_i;
-                id_o     = id_i;
-                valid_o  = 1'b1;
-                rd_o     = '0;
-                we_o     = '0;
-            end
-            cvxif_instr_pkg::BFLY_SET_F0F2: begin
-                result_o = '0;
-                hartid_o = hartid_i;
-                id_o     = id_i;
-                valid_o  = 1'b1;
-                rd_o     = '0;
-                we_o     = '0;
-            end
-            cvxif_instr_pkg::BFLY_SET_F1F3: begin
-                result_o = '0;
-                hartid_o = hartid_i;
-                id_o     = id_i;
-                valid_o  = 1'b1;
-                rd_o     = '0;
-                we_o     = '0;
-            end
-            cvxif_instr_pkg::BFLY_SET_W1W3: begin
-                result_o = '0;
-                hartid_o = hartid_i;
-                id_o     = id_i;
-                valid_o  = 1'b1;
-                rd_o     = '0;
-                we_o     = '0;
-            end
-            cvxif_instr_pkg::BFLY_SET_W2: begin
-                result_o = '0;
-                hartid_o = hartid_i;
-                id_o     = id_i;
-                valid_o  = 1'b1;
-                rd_o     = '0;
-                we_o     = '0;
-            end
             cvxif_instr_pkg::BFLY_GET_F0: begin
-                result_o = bfly_type ? bfly4_0_o : add0_ff;
-                hartid_o = hartid_i;
-                id_o     = id_i;
-                valid_o  = 1'b1;
-                rd_o     = rd_i;
-                we_o     = 1'b1;
+                next_result = bfly_type ? bfly4_0_o : add0_ff;
+                next_we     = 1'b1;
             end
             cvxif_instr_pkg::BFLY_GET_F1: begin
-                result_o = bfly_type ? bfly4_1_o : add1_ff;
-                hartid_o = hartid_i;
-                id_o     = id_i;
-                valid_o  = 1'b1;
-                rd_o     = rd_i;
-                we_o     = 1'b1;
+                next_result = bfly_type ? bfly4_1_o : add1_ff;
+                next_we     = 1'b1;
             end
             cvxif_instr_pkg::BFLY_GET_F2: begin
-                result_o = bfly4_2_o;
-                hartid_o = hartid_i;
-                id_o     = id_i;
-                valid_o  = 1'b1;
-                rd_o     = rd_i;
-                we_o     = 1'b1;
+                next_result = bfly4_2_o;
+                next_we     = 1'b1;
             end
             cvxif_instr_pkg::BFLY_GET_F3: begin
-                result_o = bfly4_3_o;
-                hartid_o = hartid_i;
-                id_o     = id_i;
-                valid_o  = 1'b1;
-                rd_o     = rd_i;
-                we_o     = 1'b1;
+                next_result = bfly4_3_o;
+                next_we     = 1'b1;
             end
             default: begin
-                result_o = '0;
-                hartid_o = '0;
-                id_o     = '0;
-                valid_o  = '0;
-                rd_o     = '0;
-                we_o     = '0;
             end
         endcase
     end
+
+
+    // Réponse au cycle suivant
+    logic        valid_q;
+    logic [31:0] result_q;
+    logic [4:0]  rd_q;
+    logic        we_q;
+    id_t         id_q;
+    hartid_t     hartid_q;
+
+    logic instr_is_valid;
+    assign instr_is_valid = (opcode_i != cvxif_instr_pkg::ILLEGAL && opcode_i != cvxif_instr_pkg::NOP);
+
+    always_ff @(posedge clk_i, negedge rst_ni) begin
+        if (~rst_ni) begin
+            valid_q  <= '0;
+            id_q     <= '0;
+            hartid_q <= '0;
+            result_q <= '0;
+            rd_q     <= '0;
+            we_q     <= '0;          
+        end else begin
+            valid_q <= 1'b0;
+            id_q     <= '0;
+            hartid_q <= '0;
+            result_q <= '0;
+            rd_q     <= '0;
+            we_q     <= '0;
+
+            if (instr_is_valid && issue_ready_i) begin
+                valid_q  <= 1'b1;
+                id_q     <= id_i;
+                hartid_q <= hartid_i;
+                result_q <= next_result;
+                rd_q     <= next_rd;
+                we_q     <= next_we;
+            end 
+        end
+    end
+
+    // Branchement des sorties
+    assign valid_o  = valid_q;
+    assign result_o = result_q;
+    assign id_o     = id_q;
+    assign rd_o     = rd_q;
+    assign we_o     = we_q;
+    assign hartid_o = hartid_q;
 
 endmodule : bfly

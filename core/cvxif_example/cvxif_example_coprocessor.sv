@@ -131,6 +131,7 @@ module cvxif_example_coprocessor
       .hartid_i   (issue_hartid),
       .id_i       (issue_id),
       .rd_i       (issue_rd),
+      .issue_ready_i (issue_ready),
       .hartid_o   (hartid),
       .id_o       (id),
       .result_o   (result),
