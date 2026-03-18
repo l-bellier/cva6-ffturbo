@@ -38,6 +38,10 @@
 #define BFLY_SET_W2(rs1_val) \
   __asm__ volatile (".insn r " OPC_CUSTOM3 ", 0x0, 0x05, x0, %0, x0" : : "r"(rs1_val))
 
+// BFLY_EXEC :
+#define BFLY_EXEC() \
+  __asm__ volatile (".insn r " OPC_CUSTOM3 ", 0x0, 0x05, x0, x0, x0")
+
 
 // Lecture sur le copro
 // BFLY_GET_F0 : rd = résultat

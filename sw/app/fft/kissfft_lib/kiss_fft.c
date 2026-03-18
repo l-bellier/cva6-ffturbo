@@ -5,7 +5,6 @@
  *  SPDX-License-Identifier: BSD-3-Clause
  *  See COPYING file for more information.
  */
-
 #include <stdint.h>
 #include "_kiss_fft_guts.h"
 /* The guts header contains all the multiplication and addition macros that are defined for
@@ -26,13 +25,31 @@ static void kf_bfly2_copro(
     kiss_fft_cpx * Fout2;
     kiss_fft_cpx * tw1 = st->twiddles;
     Fout2 = Fout + m;
-    
-    BFLY_CFG(BFLY_CFG_FILL_BUFF | BFLY_CFG_RST_BUFF | (m << 4)); // BFLY2 sans enregistrement des twiddles
-    
+        
     do {
         BFLY_SET_F0F2(*(uint32_t*)Fout, *(uint32_t*)Fout2);
         BFLY_SET_W2(*(uint32_t*)tw1);
         tw1 += fstride;
+        
+        BFLY_GET_F0(*(uint32_t*)Fout);
+        BFLY_GET_F1(*(uint32_t*)Fout2);
+
+        ++Fout2;
+        ++Fout;
+    } while (--m);
+}
+
+static void kf_bfly2_copro_buff(
+        kiss_fft_cpx * Fout,
+        int m
+        )
+{
+    kiss_fft_cpx * Fout2;
+    Fout2 = Fout + m;
+        
+    do {
+        BFLY_SET_F0F2(*(uint32_t*)Fout, *(uint32_t*)Fout2);
+        BFLY_EXEC();
         
         BFLY_GET_F0(*(uint32_t*)Fout);
         BFLY_GET_F1(*(uint32_t*)Fout2);
@@ -77,12 +94,6 @@ static void kf_bfly4_copro(
     const size_t m2=2*m;
     const size_t m3=3*m;
 
-    if (st->inverse) {
-        BFLY_CFG(BFLY_CFG_BFLY4 | BFLY_CFG_INV_FFT | BFLY_CFG_FILL_BUFF | BFLY_CFG_RST_BUFF | (m << 4));
-    }else{
-        BFLY_CFG(BFLY_CFG_BFLY4 | BFLY_CFG_FILL_BUFF | BFLY_CFG_RST_BUFF | (m << 4));
-    }
-
     tw3 = tw2 = tw1 = st->twiddles;
 
     do {
@@ -94,6 +105,31 @@ static void kf_bfly4_copro(
         tw1 += fstride;
         tw2 += fstride*2;
         tw3 += fstride*3;
+
+        BFLY_GET_F0(*(uint32_t*)Fout);
+        BFLY_GET_F1(*(uint32_t*)&Fout[m]);
+        BFLY_GET_F2(*(uint32_t*)&Fout[m2]);
+        BFLY_GET_F3(*(uint32_t*)&Fout[m3]);
+
+        ++Fout;
+    } while (--k);
+}
+
+static void kf_bfly4_copro_buff(
+        kiss_fft_cpx * Fout,
+        const size_t m
+        )
+{
+    size_t k=m;
+    const size_t m2=2*m;
+    const size_t m3=3*m;
+
+
+    do {
+        BFLY_SET_F0F2(*(uint32_t*)Fout, *(uint32_t*)&Fout[m2]);
+        BFLY_SET_F1F3(*(uint32_t*)&Fout[m], *(uint32_t*)&Fout[m3]);
+        BFLY_EXEC();
+
 
         BFLY_GET_F0(*(uint32_t*)Fout);
         BFLY_GET_F1(*(uint32_t*)&Fout[m]);
@@ -302,6 +338,92 @@ static void kf_bfly_generic(
     KISS_FFT_TMP_FREE(scratch);
 }
 
+static void kf_work_lin(
+        kiss_fft_cpx * Fout,
+        const kiss_fft_cpx * f,
+        const size_t fstride,
+        int in_stride,
+        int * factors,
+        const kiss_fft_cfg st
+        )
+{
+    int num_stages = 0;
+    while (factors[2 * num_stages + 1] > 1) {
+        num_stages++;
+    }
+    num_stages++;
+
+    int p_arr[32];
+    int m_arr[32];
+    int tw_stride_arr[32];
+    int step_back_arr[32];
+
+    int current_fstride = fstride;
+    for (int s = 0; s < num_stages; s++) {
+        p_arr[s] = factors[2 * s];
+        m_arr[s] = factors[2 * s + 1];
+        tw_stride_arr[s] = current_fstride;
+        
+        current_fstride *= p_arr[s];
+        step_back_arr[s] = current_fstride; 
+    }
+    
+    int N = p_arr[0] * m_arr[0];
+
+    BFLY_EXEC();
+    // 3. LE BIT-REVERSAL ULTRA-RAPIDE (Odometer)
+    int digits[32] = {0}; 
+    int src_idx = 0;
+
+    for (int i = 0; i < N; ++i) {
+        Fout[i] = f[src_idx * in_stride]; // Copie des données
+
+        // Incrémentation du compteur en partant de la plus petite roue
+        for (int s = num_stages - 1; s >= 0; --s) {
+            digits[s]++;
+            src_idx += tw_stride_arr[s]; // On avance dans l'entrée
+            
+            if (digits[s] < p_arr[s]) {
+                break; // Pas de retenue, on s'arrête ici pour ce tour
+            }
+            
+            // Retenue (Carry) : la roue a fait un tour complet
+            digits[s] = 0; // Remise à zéro de la roue
+            src_idx -= step_back_arr[s]; // On recule src_idx d'un bloc complet
+        }
+    }
+    BFLY_EXEC();
+
+    for (int s = num_stages - 1; s >= 0; --s) {
+        int p = p_arr[s];
+        int m = m_arr[s];
+        int tw_stride = tw_stride_arr[s];
+        int step = p * m;
+        
+        if (p == 4) {
+            BFLY_CFG(BFLY_CFG_BFLY4 | BFLY_CFG_FILL_BUFF | BFLY_CFG_RST_BUFF | (m << 4));
+            kf_bfly4_copro(Fout, tw_stride, st, m);
+            BFLY_CFG(BFLY_CFG_BFLY4 | BFLY_CFG_RST_BUFF | (m << 4));
+            for (int i = step; i < N; i += step) {
+                kf_bfly4_copro_buff(Fout + i, m);
+            }
+        } 
+        else if (p == 2) {
+            BFLY_CFG(BFLY_CFG_FILL_BUFF | BFLY_CFG_RST_BUFF | (m << 4));
+            kf_bfly2_copro(Fout, tw_stride, st, m);
+            BFLY_CFG(BFLY_CFG_RST_BUFF | (m << 4));
+            for (int i = step; i < N; i += step) {
+                kf_bfly2_copro_buff(Fout + i, m);
+            }
+        }
+        else {
+            for (int i = 0; i < N; i += step) {
+                kf_bfly_generic(Fout + i, tw_stride, st, m, p);
+            }
+        }
+    }
+}
+
 static
 void kf_work(
         kiss_fft_cpx * Fout,
@@ -467,7 +589,7 @@ void kiss_fft_stride(kiss_fft_cfg st,const kiss_fft_cpx *fin,kiss_fft_cpx *fout,
         memcpy(fout,tmpbuf,sizeof(kiss_fft_cpx)*st->nfft);
         KISS_FFT_TMP_FREE(tmpbuf);
     }else{
-        kf_work( fout, fin, 1,in_stride, st->factors,st );
+        kf_work_lin( fout, fin, 1,in_stride, st->factors,st );
     }
 }
 
