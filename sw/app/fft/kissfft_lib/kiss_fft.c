@@ -356,7 +356,6 @@ static void kf_work_lin(
     int p_arr[32];
     int m_arr[32];
     int tw_stride_arr[32];
-    int step_back_arr[32];
 
     int current_fstride = fstride;
     for (int s = 0; s < num_stages; s++) {
@@ -365,34 +364,28 @@ static void kf_work_lin(
         tw_stride_arr[s] = current_fstride;
         
         current_fstride *= p_arr[s];
-        step_back_arr[s] = current_fstride; 
     }
     
     int N = p_arr[0] * m_arr[0];
 
-    BFLY_EXEC();
-    // 3. LE BIT-REVERSAL ULTRA-RAPIDE (Odometer)
-    int digits[32] = {0}; 
-    int src_idx = 0;
+    uint32_t *dst0, *dst1;
+    uint32_t temp0, temp1;
 
-    for (int i = 0; i < N; ++i) {
-        Fout[i] = f[src_idx * in_stride]; // Copie des données
+    uint32_t *dst = (uint32_t *)Fout;
+    uint32_t *src = (uint32_t *)f;
 
-        // Incrémentation du compteur en partant de la plus petite roue
-        for (int s = num_stages - 1; s >= 0; --s) {
-            digits[s]++;
-            src_idx += tw_stride_arr[s]; // On avance dans l'entrée
-            
-            if (digits[s] < p_arr[s]) {
-                break; // Pas de retenue, on s'arrête ici pour ce tour
-            }
-            
-            // Retenue (Carry) : la roue a fait un tour complet
-            digits[s] = 0; // Remise à zéro de la roue
-            src_idx -= step_back_arr[s]; // On recule src_idx d'un bloc complet
-        }
+    BFLY_REV_RST(dst);
+
+    for (int i = 0; i < 512; i+=2) {
+        temp0 = src[i];
+        temp1 = src[i+1];
+        
+        BFLY_REV(dst0);
+        BFLY_REV(dst1);
+         
+        *dst0 = temp0;
+        *dst1 = temp1;
     }
-    BFLY_EXEC();
 
     for (int s = num_stages - 1; s >= 0; --s) {
         int p = p_arr[s];

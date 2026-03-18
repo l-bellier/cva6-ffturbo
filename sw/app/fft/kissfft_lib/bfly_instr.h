@@ -60,6 +60,16 @@
 #define BFLY_GET_F3(rd_var) \
   __asm__ volatile (".insn r " OPC_CUSTOM3 ", 0x0, 0x09, %0, x0, x0" : "=r"(rd_var))
 
+
+// BFLY_REV_RST : r = Fout
+#define BFLY_REV_RST(rs1_val) \
+  __asm__ volatile (".insn r " OPC_CUSTOM3 ", 0x0, 0x0a, x0, %0, x0" : : "r"(rs1_val))
+
+// BFLY_REV : rd = index
+#define BFLY_REV(rd_var) \
+  __asm__ volatile (".insn r " OPC_CUSTOM3 ", 0x0, 0x0b, %0, x0, x0" : "=r"(rd_var))
+
+
 // NOP
 #define BFLY_NOP() \
   __asm__ volatile (".insn r " OPC_CUSTOM3 ", 0x0, 0x00, x0, x0, x0")
