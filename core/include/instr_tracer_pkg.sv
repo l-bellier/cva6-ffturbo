@@ -198,5 +198,19 @@ package instr_tracer_pkg;
   parameter [31:0] C_LDSP = 32'b????????????????011???????????10;
   parameter [31:0] C_SDSP = 32'b????????????????111???????????10;
 
+  // Custom3
+  localparam logic [6:0] Custom3Op = 'h7b;
+
+  parameter INSTR_BFLY_CFG      = {7'b0000001, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
+  parameter INSTR_BFLY_SET_F0F2 = {7'b0000010, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
+  parameter INSTR_BFLY_SET_F1F3 = {7'b0000011, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
+  parameter INSTR_BFLY_SET_W1W3 = {7'b0000100, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
+  parameter INSTR_BFLY_SET_W2   = {7'b0000101, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
+  parameter INSTR_BFLY_GET_F0   = {7'b0000110, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
+  parameter INSTR_BFLY_GET_F1   = {7'b0000111, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
+  parameter INSTR_BFLY_GET_F2   = {7'b0001000, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
+  parameter INSTR_BFLY_GET_F3   = {7'b0001001, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
+  parameter BFLY_REV_RST        = {7'b0001010, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
+  parameter BFLY_REV            = {7'b0001011, 5'b?, 5'b?, 3'b000, 5'b?, Custom3Op};
 endpackage
 `endif

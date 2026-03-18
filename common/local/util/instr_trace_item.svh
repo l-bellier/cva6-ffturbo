@@ -362,6 +362,20 @@ class instr_trace_item #(
             instr_tracer_pkg::C_ADDW:         s = this.printRInstr("c.addw");
             instr_tracer_pkg::C_NOP:          s = this.printMnemonic("c.nop");
             instr_tracer_pkg::C_EBREAK:       s = this.printMnemonic("c.ebreak");
+
+            //Custom3
+            instr_tracer_pkg::INSTR_BFLY_CFG:       s = this.printRInstr("blfy_cfg");
+            instr_tracer_pkg::INSTR_BFLY_SET_F0F2:  s = this.printRInstr("blfy_set_F0F2");
+            instr_tracer_pkg::INSTR_BFLY_SET_F1F3:  s = this.printRInstr("blfy_set_F1F3");
+            instr_tracer_pkg::INSTR_BFLY_SET_W1W3:  s = this.printRInstr("blfy_set_W1W3");
+            instr_tracer_pkg::INSTR_BFLY_SET_W2:    s = this.printRInstr("blfy_set_W2");
+            instr_tracer_pkg::INSTR_BFLY_GET_F0:    s = this.printRInstr("blfy_get_F0");
+            instr_tracer_pkg::INSTR_BFLY_GET_F1:    s = this.printRInstr("blfy_get_F1");
+            instr_tracer_pkg::INSTR_BFLY_GET_F2:    s = this.printRInstr("blfy_get_F2");
+            instr_tracer_pkg::INSTR_BFLY_GET_F3:    s = this.printRInstr("blfy_get_F3");
+            instr_tracer_pkg::BFLY_REV_RST:         s = this.printRInstr("blfy_rev_rst");
+            instr_tracer_pkg::BFLY_REV:             s = this.printRInstr("blfy_rev");
+            
             default:                          s = this.printMnemonic("INVALID");
         endcase
 
