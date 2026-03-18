@@ -36,11 +36,34 @@ module bfly
     output logic                  valid_o,
     output logic                  we_o
 );
-    
-// -----------------------------------------------------------------------------
-// Bfly 2
-// -----------------------------------------------------------------------------
-    
+    // Gestion du réarangement des données 
+
+    logic [8:0] r_counter;
+    logic [31:0] next_index;
+    logic [31:0] dst_ptr;
+
+    // On calcul un offset d'adresse on utilise lw il faut décaler le résultat de 2 bit
+    assign next_index = {21'b0, r_counter[1:0], r_counter[3:2], r_counter[5:4], r_counter[7:6], r_counter[8], 2'b0};
+
+    always_ff @(posedge clk_i, negedge rst_ni) begin
+        if (~rst_ni) begin            
+            r_counter <= '0;
+            dst_ptr   <= '0;
+        end else begin
+        if (issue_ready_i) begin // Registres valides
+            case (opcode_i)
+                cvxif_instr_pkg:: BFLY_REV : begin
+                    r_counter <= r_counter + 1'b1;
+                end
+                cvxif_instr_pkg:: BFLY_REV_RST : begin
+                    dst_ptr <= registers_i[0];
+                    r_counter <= 'b0;
+                end
+            endcase
+        end
+        end
+    end
+
     // Buffers et params
     logic bfly_type; // 1'b0 : 2 | 1'b1 : 4
     logic fill_buffer;
@@ -252,6 +275,14 @@ module bfly
             cvxif_instr_pkg::BFLY_GET_F3: begin
                 next_result = bfly4_3_o;
                 next_we     = 1'b1;
+            end
+            cvxif_instr_pkg:: BFLY_REV : begin
+                next_result = next_index + dst_ptr;
+                next_we     = 1'b1;
+            end
+            cvxif_instr_pkg:: BFLY_REV_RST : begin
+                next_result = 32'b0;
+                next_we     = 1'b0;
             end
             default: begin
             end

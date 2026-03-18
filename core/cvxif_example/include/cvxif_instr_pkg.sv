@@ -26,7 +26,9 @@ package cvxif_instr_pkg;
     BFLY_GET_F0 = 4'b0111,
     BFLY_GET_F1 = 4'b1000,
     BFLY_GET_F2 = 4'b1001,
-    BFLY_GET_F3 = 4'b1010
+    BFLY_GET_F3 = 4'b1010,
+    BFLY_REV_RST= 4'b1011,
+    BFLY_REV    = 4'b1100
   } opcode_t;
 
 
@@ -55,7 +57,7 @@ package cvxif_instr_pkg;
     compressed_resp_t resp;
   } copro_compressed_resp_t;
 
-  parameter int unsigned NbInstr = 10;
+  parameter int unsigned NbInstr = 12;
   parameter copro_issue_resp_t CoproInstr[NbInstr] = '{
       '{
           // Custom Nop
@@ -136,6 +138,22 @@ package cvxif_instr_pkg;
           mask: 32'b1111111_00000_00000_111_00000_1111111,
           resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b0, 1'b0, 1'b0}},
           opcode : BFLY_GET_F3
+      },
+      '{
+          // BFLY_REV_RST
+          instr:
+          32'b0001010_00000_00000_000_00000_1111011, // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b0, register_read : {1'b0, 1'b0, 1'b1}},
+          opcode : BFLY_REV_RST
+      },
+      '{
+          // BFLY_REV
+          instr:
+          32'b0001011_00000_00000_000_00000_1111011, // custom3 opcode
+          mask: 32'b1111111_00000_00000_111_00000_1111111,
+          resp : '{accept : 1'b1, writeback : 1'b1, register_read : {1'b0, 1'b0, 1'b0}},
+          opcode : BFLY_REV
       }
   };
 
