@@ -15,6 +15,10 @@
 /* Le header bfly permet l'utilisation des macros définies spécifiquement pour le coprocesseur.
 */
 
+/*Effectue un papillon de taille 2 et charge les twiddle factors,
+la fonction entrelace le chargement de données et l'execution des papillons pour éviter
+l'attente de données
+*/
 static void kf_bfly2_copro(
         kiss_fft_cpx * Fout,
         const size_t fstride,
@@ -22,41 +26,85 @@ static void kf_bfly2_copro(
         int m
         )
 {
-    kiss_fft_cpx * Fout2;
+    kiss_fft_cpx * Fout2 = Fout + m;
     kiss_fft_cpx * tw1 = st->twiddles;
-    Fout2 = Fout + m;
-        
-    do {
-        BFLY_SET_F0F2(*(uint32_t*)Fout, *(uint32_t*)Fout2);
-        BFLY_SET_W2(*(uint32_t*)tw1);
+    
+    uint32_t f0, f2, w;
+
+    f0 = *(uint32_t*)Fout;
+    f2 = *(uint32_t*)Fout2;
+    w  = *(uint32_t*)tw1;
+
+    BFLY_SET_F0F2(f0, f2);
+    BFLY_SET_W2(w);
+
+    while (--m) {
         tw1 += fstride;
         
+        uint32_t f0_next = *(uint32_t*)(Fout + 1);
+        uint32_t f2_next = *(uint32_t*)(Fout2 + 1);
+        uint32_t w_next  = *(uint32_t*)tw1;
+
         BFLY_GET_F0(*(uint32_t*)Fout);
         BFLY_GET_F1(*(uint32_t*)Fout2);
 
-        ++Fout2;
+        f0 = f0_next; 
+        f2 = f2_next; 
+        w  = w_next;
+
+        BFLY_SET_F0F2(f0, f2);
+        BFLY_SET_W2(w);
+
         ++Fout;
-    } while (--m);
+        ++Fout2;
+    }
+
+    BFLY_GET_F0(*(uint32_t*)Fout);
+    BFLY_GET_F1(*(uint32_t*)Fout2);
 }
 
-static void kf_bfly2_copro_buff(
-        kiss_fft_cpx * Fout,
-        int m
-        )
-{
-    kiss_fft_cpx * Fout2;
-    Fout2 = Fout + m;
-        
-    do {
-        BFLY_SET_F0F2(*(uint32_t*)Fout, *(uint32_t*)Fout2);
-        BFLY_EXEC();
-        
+/*
+Effectue un papillon de taille 2 et utilise les twiddle factors présent dans le buffer,
+la fonction entrelace le chargement de données et l'execution des papillons pour éviter
+l'attente de données
+*/
+static void kf_bfly2_copro_buff(kiss_fft_cpx * Fout, int m) {
+
+    kiss_fft_cpx * Fout2 = Fout + m;
+    uint32_t f0_next, f2_next;
+    uint32_t f0_curr, f2_curr;
+
+    f0_curr = *(uint32_t*)Fout;
+    f2_curr = *(uint32_t*)Fout2;
+
+    BFLY_SET_F0F2(f0_curr, f2_curr);
+    BFLY_EXEC();
+
+    if (m > 1) {
+        f0_next = *(uint32_t*)(Fout + 1);
+        f2_next = *(uint32_t*)(Fout2 + 1);
+    }
+
+    for (int i = 0; i < m - 1; ++i) {
         BFLY_GET_F0(*(uint32_t*)Fout);
         BFLY_GET_F1(*(uint32_t*)Fout2);
 
-        ++Fout2;
-        ++Fout;
-    } while (--m);
+        f0_curr = f0_next;
+        f2_curr = f2_next;
+
+        if (i < m - 2) {
+            f0_next = *(uint32_t*)(Fout + 2);
+            f2_next = *(uint32_t*)(Fout2 + 2);
+        }
+
+        BFLY_SET_F0F2(f0_curr, f2_curr);
+        BFLY_EXEC();
+
+        Fout++; Fout2++;
+    }
+
+    BFLY_GET_F0(*(uint32_t*)Fout);
+    BFLY_GET_F1(*(uint32_t*)Fout2);
 }
 
 static void kf_bfly2(
@@ -82,62 +130,130 @@ static void kf_bfly2(
     }while (--m);
 }
 
+/*Effectue un papillon de taille 4 et charge les twiddle factors,
+la fonction entrelace le chargement de données et l'execution des papillons pour éviter
+l'attente de données
+*/
 static void kf_bfly4_copro(
-        kiss_fft_cpx * Fout,
-        const size_t fstride,
-        const kiss_fft_cfg st,
-        const size_t m
-        )
-{
-    kiss_fft_cpx *tw1,*tw2,*tw3;
-    size_t k=m;
-    const size_t m2=2*m;
-    const size_t m3=3*m;
+    kiss_fft_cpx * Fout,
+    const size_t fstride,
+    const kiss_fft_cfg st,
+    const size_t m
+) {
+    size_t k = m;
+    const size_t m2 = 2 * m;
+    const size_t m3 = 3 * m;
 
+    kiss_fft_cpx *tw1, *tw2, *tw3;
     tw3 = tw2 = tw1 = st->twiddles;
 
-    do {
-        BFLY_SET_F0F2(*(uint32_t*)Fout, *(uint32_t*)&Fout[m2]);
-        BFLY_SET_F1F3(*(uint32_t*)&Fout[m], *(uint32_t*)&Fout[m3]);
-        BFLY_SET_W1W3(*(uint32_t*)tw1, *(uint32_t*)tw3);
-        BFLY_SET_W2(*(uint32_t*)tw2);
+    kiss_fft_cpx *p0 = Fout;
+    kiss_fft_cpx *p1 = Fout + m;
+    kiss_fft_cpx *p2 = Fout + m2;
+    kiss_fft_cpx *p3 = Fout + m3;
 
+    uint32_t f0, f1, f2, f3;
+    uint32_t w1, w2, w3;
+
+    f0 = *(uint32_t*)p0;
+    f1 = *(uint32_t*)p1;
+    f2 = *(uint32_t*)p2;
+    f3 = *(uint32_t*)p3;
+    w1 = *(uint32_t*)tw1;
+    w2 = *(uint32_t*)tw2;
+    w3 = *(uint32_t*)tw3;
+
+    BFLY_SET_F0F2(f0, f2);
+    BFLY_SET_F1F3(f1, f3);
+    BFLY_SET_W1W3(w1, w3);
+    BFLY_SET_W2(w2);
+
+    while (--k) {
         tw1 += fstride;
-        tw2 += fstride*2;
-        tw3 += fstride*3;
+        tw2 += fstride * 2;
+        tw3 += fstride * 3;
 
-        BFLY_GET_F0(*(uint32_t*)Fout);
-        BFLY_GET_F1(*(uint32_t*)&Fout[m]);
-        BFLY_GET_F2(*(uint32_t*)&Fout[m2]);
-        BFLY_GET_F3(*(uint32_t*)&Fout[m3]);
+        uint32_t f0_next = *(uint32_t*)(p0 + 1);
+        uint32_t f1_next = *(uint32_t*)(p1 + 1);
+        uint32_t f2_next = *(uint32_t*)(p2 + 1);
+        uint32_t f3_next = *(uint32_t*)(p3 + 1);
+        
+        uint32_t w1_next = *(uint32_t*)tw1;
+        uint32_t w2_next = *(uint32_t*)tw2;
+        uint32_t w3_next = *(uint32_t*)tw3;
 
-        ++Fout;
-    } while (--k);
+        BFLY_GET_F0(*(uint32_t*)p0);
+        BFLY_GET_F1(*(uint32_t*)p1);
+        BFLY_GET_F2(*(uint32_t*)p2);
+        BFLY_GET_F3(*(uint32_t*)p3);
+
+        f0 = f0_next; f1 = f1_next; f2 = f2_next; f3 = f3_next;
+        w1 = w1_next; w2 = w2_next; w3 = w3_next;
+
+        BFLY_SET_F0F2(f0, f2);
+        BFLY_SET_F1F3(f1, f3);
+        BFLY_SET_W1W3(w1, w3);
+        BFLY_SET_W2(w2);      
+
+        p0++; p1++; p2++; p3++;
+    }
+
+    BFLY_GET_F0(*(uint32_t*)p0);
+    BFLY_GET_F1(*(uint32_t*)p1);
+    BFLY_GET_F2(*(uint32_t*)p2);
+    BFLY_GET_F3(*(uint32_t*)p3);
 }
 
+/*
+Effectue un papillon de taille 4 et utilise les twiddle factors présent dans le buffer,
+la fonction entrelace le chargement de données et l'execution des papillons pour éviter
+l'attente de données
+*/
 static void kf_bfly4_copro_buff(
-        kiss_fft_cpx * Fout,
-        const size_t m
-        )
-{
-    size_t k=m;
-    const size_t m2=2*m;
-    const size_t m3=3*m;
+    kiss_fft_cpx * Fout,
+    const size_t m
+) {
+    if (m == 0) return;
 
+    size_t k = m;
+    kiss_fft_cpx *p0 = Fout;
+    kiss_fft_cpx *p1 = Fout + m;
+    kiss_fft_cpx *p2 = Fout + 2 * m;
+    kiss_fft_cpx *p3 = Fout + 3 * m;
 
-    do {
-        BFLY_SET_F0F2(*(uint32_t*)Fout, *(uint32_t*)&Fout[m2]);
-        BFLY_SET_F1F3(*(uint32_t*)&Fout[m], *(uint32_t*)&Fout[m3]);
+    uint32_t f0, f1, f2, f3;
+
+    f0 = *(uint32_t*)p0;
+    f1 = *(uint32_t*)p1;
+    f2 = *(uint32_t*)p2;
+    f3 = *(uint32_t*)p3;
+
+    BFLY_SET_F0F2(f0, f2);
+    BFLY_SET_F1F3(f1, f3);
+    BFLY_EXEC();           
+
+    while (--k) {
+        f0 = *(uint32_t*)(p0 + 1);
+        f1 = *(uint32_t*)(p1 + 1);
+        f2 = *(uint32_t*)(p2 + 1);
+        f3 = *(uint32_t*)(p3 + 1);
+
+        BFLY_GET_F0(*(uint32_t*)p0);
+        BFLY_GET_F1(*(uint32_t*)p1);
+        BFLY_GET_F2(*(uint32_t*)p2);
+        BFLY_GET_F3(*(uint32_t*)p3);
+
+        BFLY_SET_F0F2(f0, f2);
+        BFLY_SET_F1F3(f1, f3);
         BFLY_EXEC();
 
+        p0++; p1++; p2++; p3++;
+    }
 
-        BFLY_GET_F0(*(uint32_t*)Fout);
-        BFLY_GET_F1(*(uint32_t*)&Fout[m]);
-        BFLY_GET_F2(*(uint32_t*)&Fout[m2]);
-        BFLY_GET_F3(*(uint32_t*)&Fout[m3]);
-
-        ++Fout;
-    } while (--k);
+    BFLY_GET_F0(*(uint32_t*)p0);
+    BFLY_GET_F1(*(uint32_t*)p1);
+    BFLY_GET_F2(*(uint32_t*)p2);
+    BFLY_GET_F3(*(uint32_t*)p3);
 }
 
 
@@ -347,12 +463,15 @@ static void kf_work_lin(
         const kiss_fft_cfg st
         )
 {
+    
+    // Calcul du nombre d'étages
     int num_stages = 0;
     while (factors[2 * num_stages + 1] > 1) {
         num_stages++;
     }
     num_stages++;
 
+    // Récupération des paramètres dans l'ordre des étages
     int p_arr[32];
     int m_arr[32];
     int tw_stride_arr[32];
@@ -368,25 +487,29 @@ static void kf_work_lin(
     
     int N = p_arr[0] * m_arr[0];
 
-    uint32_t *dst0, *dst1;
-    uint32_t temp0, temp1;
-
+    // Réorganisation des données pour une fft512
+    uint32_t *dst0, *dst1, *dst2, *dst3;
+    uint32_t temp0, temp1, temp2, temp3;
     uint32_t *dst = (uint32_t *)Fout;
     uint32_t *src = (uint32_t *)f;
 
     BFLY_REV_RST(dst);
-
-    for (int i = 0; i < 512; i+=2) {
+    for (int i = 0; i < 512; i+=4) {
         temp0 = src[i];
         temp1 = src[i+1];
-        
+        temp2 = src[i+2];
+        temp3 = src[i+3]; 
         BFLY_REV(dst0);
         BFLY_REV(dst1);
-         
+        BFLY_REV(dst2);
+        BFLY_REV(dst3);
         *dst0 = temp0;
         *dst1 = temp1;
+        *dst2 = temp2;
+        *dst3 = temp3;
     }
 
+    // Calcul des étage les uns après les autres
     for (int s = num_stages - 1; s >= 0; --s) {
         int p = p_arr[s];
         int m = m_arr[s];
@@ -395,18 +518,18 @@ static void kf_work_lin(
         
         if (p == 4) {
             BFLY_CFG(BFLY_CFG_BFLY4 | BFLY_CFG_FILL_BUFF | BFLY_CFG_RST_BUFF | (m << 4));
-            kf_bfly4_copro(Fout, tw_stride, st, m);
+            kf_bfly4_copro(Fout, tw_stride, st, m); // Chargement des twiddle factors sur la première boucle
             BFLY_CFG(BFLY_CFG_BFLY4 | BFLY_CFG_RST_BUFF | (m << 4));
             for (int i = step; i < N; i += step) {
-                kf_bfly4_copro_buff(Fout + i, m);
+                kf_bfly4_copro_buff(Fout + i, m); // Réutilisation des twiddle factors
             }
         } 
         else if (p == 2) {
             BFLY_CFG(BFLY_CFG_FILL_BUFF | BFLY_CFG_RST_BUFF | (m << 4));
-            kf_bfly2_copro(Fout, tw_stride, st, m);
+            kf_bfly2_copro(Fout, tw_stride, st, m); // Chargement des twiddle factors sur la première boucle
             BFLY_CFG(BFLY_CFG_RST_BUFF | (m << 4));
             for (int i = step; i < N; i += step) {
-                kf_bfly2_copro_buff(Fout + i, m);
+                kf_bfly2_copro_buff(Fout + i, m); // Réutilisation des twiddle factors
             }
         }
         else {
